@@ -20,6 +20,16 @@ Open http://127.0.0.1:8000. Without a key it runs in offline mode (TF-IDF cluste
 - Data lives in `data/` (override with `GROUNDWORK_DATA`): `auth.db` for users and sessions, and one SQLite file per user in `data/workspaces/`, so accounts are isolated from each other.
 - Behind HTTPS, set `GROUNDWORK_SECURE_COOKIES=1`.
 
+## Deploy
+
+GitHub stores the code but cannot run it, so deploy to a host that runs Python. `render.yaml` is a ready Render Blueprint:
+
+1. In Render, choose New > Blueprint and select this repo.
+2. Optionally set `ANTHROPIC_API_KEY` when prompted.
+3. Render builds, mounts a persistent disk at `/var/data` for the SQLite files, and serves over HTTPS.
+
+Do not remove the disk: accounts and workspaces are SQLite files and would be wiped on each deploy.
+
 ## What is in it
 
 - Home: pipeline strip, rule-based insights, recent activity

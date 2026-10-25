@@ -21,6 +21,8 @@
     <nav class="nav" aria-label="Workspace">
       <a href="#/home" data-nav="home">Home</a>
       <a href="#/canvas" data-nav="canvas">Canvas</a>
+      <a href="#/integrations" data-nav="integrations">Integrations</a>
+      <a href="#/team" data-nav="team">Team</a>
     </nav>
     <div class="nav-gap"></div>
     <nav class="spine" aria-label="From evidence to initiatives">
@@ -34,6 +36,7 @@
       <div class="ai-state" id="ai-state"></div>
       <button class="link-quiet" data-act="reset-workspace" type="button">Reset workspace</button>
       <div class="account">
+        <label class="ws-switch"><span class="visually-hidden">Workspace</span><select id="ws-switch" data-change="ws-switch" aria-label="Workspace"></select></label>
         <div class="who"><b id="acct-name"></b><span id="acct-email"></span></div>
         <button class="link-quiet" data-act="logout" type="button">Log out</button>
       </div>
@@ -55,6 +58,8 @@
 <dialog id="dlg"></dialog>
 <div class="toast" id="toast" role="status"></div>
 <script src="/static/app.js"></script>
+<script src="/static/team.js"></script>
+<script src="/static/integrations.js"></script>
 <script src="/static/views.js"></script>
 </body>
 </html>

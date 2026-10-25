@@ -1,23 +1,27 @@
 # Render Blueprint: https://render.com/docs/blueprint-spec
-# Deploy: Render dashboard > New > Blueprint > pick this repo.
+# Deploy: Render dashboard > New > Blueprint > pick this repo. Data lives in Supabase, so no disk is needed.
 services:
   - type: web
     name: groundwork
     runtime: python
-    plan: starter            # persistent disks need a paid instance
+    plan: free               # sleeps when idle; use a paid plan to keep it warm
     buildCommand: pip install -r requirements.txt
     startCommand: python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
     healthCheckPath: /api/auth/me
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.7
-      - key: GROUNDWORK_DATA
-        value: /var/data
       - key: GROUNDWORK_SECURE_COOKIES
         value: "1"
-      - key: ANTHROPIC_API_KEY   # optional: leave blank to run in offline mode
+      - key: GROUNDWORK_SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL        # Supabase transaction pooler connection string
         sync: false
-    disk:
-      name: groundwork-data
-      mountPath: /var/data
-      sizeGB: 1
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_ANON_KEY
+        sync: false
+      - key: SUPABASE_JWT_SECRET # only for projects on the legacy HS256 secret
+        sync: false
+      - key: ANTHROPIC_API_KEY   # optional
+        sync: false

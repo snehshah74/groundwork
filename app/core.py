@@ -1,20 +1,17 @@
-"""Groundwork core: database, data access, insights, and the context brief builder.
+"""Groundwork core: workspace data access, insights, and the context brief builder.
 
-Shared by the web API and the MCP server so both see the same data.
+Shared by the web API and the MCP server so both see the same data. Every function runs against the
+workspace schema selected with use_schema().
 """
 from __future__ import annotations
 
-import contextvars
 import csv
 import io
 import json
-import os
-import sqlite3
-from contextlib import contextmanager
 from datetime import datetime, timezone
-from pathlib import Path
 
-DB_PATH = os.environ.get("GROUNDWORK_DB", str(Path(__file__).resolve().parent.parent / "groundwork.db"))
+from . import db
+from .db import conn, one, rows, use_schema  # noqa: F401  (re-exported for the other modules)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS product (
@@ -25,33 +22,34 @@ CREATE TABLE IF NOT EXISTS product (
     updated_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS themes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id BIGSERIAL PRIMARY KEY,
     title TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS evidence (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    source TEXT NOT NULL DEFAULT 'note',
-    text TEXT NOT NULL,
-    problem_id INTEGER REFERENCES problems(id) ON DELETE SET NULL,
-    created_at TEXT NOT NULL
-);
 CREATE TABLE IF NOT EXISTS problems (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id BIGSERIAL PRIMARY KEY,
     title TEXT NOT NULL,
     summary TEXT NOT NULL DEFAULT '',
     persona TEXT NOT NULL DEFAULT '',
     severity TEXT NOT NULL DEFAULT 'medium',
-    theme_id INTEGER REFERENCES themes(id) ON DELETE SET NULL,
+    theme_id BIGINT REFERENCES themes(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS evidence (
+    id BIGSERIAL PRIMARY KEY,
+    source TEXT NOT NULL DEFAULT 'note',
+    text TEXT NOT NULL,
+    problem_id BIGINT REFERENCES problems(id) ON DELETE SET NULL,
+    external_ref TEXT,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS initiatives (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    problem_id INTEGER NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
+    id BIGSERIAL PRIMARY KEY,
+    problem_id BIGINT NOT NULL REFERENCES problems(id) ON DELETE CASCADE,
     title TEXT NOT NULL,
     theme TEXT NOT NULL DEFAULT '',
-    theme_id INTEGER REFERENCES themes(id) ON DELETE SET NULL,
+    theme_id BIGINT REFERENCES themes(id) ON DELETE SET NULL,
     persona TEXT NOT NULL DEFAULT '',
     problem_statement TEXT NOT NULL DEFAULT '',
     success_metric TEXT NOT NULL DEFAULT '',
@@ -61,8 +59,8 @@ CREATE TABLE IF NOT EXISTS initiatives (
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS stories (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    initiative_id INTEGER NOT NULL REFERENCES initiatives(id) ON DELETE CASCADE,
+    id BIGSERIAL PRIMARY KEY,
+    initiative_id BIGINT NOT NULL REFERENCES initiatives(id) ON DELETE CASCADE,
     activity TEXT NOT NULL DEFAULT '',
     title TEXT NOT NULL,
     description TEXT NOT NULL DEFAULT '',
@@ -71,20 +69,71 @@ CREATE TABLE IF NOT EXISTS stories (
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS dispatches (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    initiative_id INTEGER NOT NULL REFERENCES initiatives(id) ON DELETE CASCADE,
+    id BIGSERIAL PRIMARY KEY,
+    initiative_id BIGINT NOT NULL REFERENCES initiatives(id) ON DELETE CASCADE,
     target TEXT NOT NULL,
     created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS outcomes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    initiative_id INTEGER NOT NULL REFERENCES initiatives(id) ON DELETE CASCADE,
+    id BIGSERIAL PRIMARY KEY,
+    initiative_id BIGINT NOT NULL REFERENCES initiatives(id) ON DELETE CASCADE,
     verdict TEXT NOT NULL,
     metric_value TEXT NOT NULL DEFAULT '',
     note TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS connections (
+    provider TEXT PRIMARY KEY,
+    status TEXT NOT NULL DEFAULT 'connected',
+    config TEXT NOT NULL DEFAULT '{}',
+    secret TEXT NOT NULL DEFAULT '',
+    webhook_token TEXT,
+    connected_by BIGINT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS sync_links (
+    id BIGSERIAL PRIMARY KEY,
+    provider TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    local_id BIGINT NOT NULL,
+    external_id TEXT NOT NULL,
+    external_key TEXT NOT NULL DEFAULT '',
+    external_url TEXT NOT NULL DEFAULT '',
+    external_status TEXT NOT NULL DEFAULT '',
+    synced_at TEXT NOT NULL,
+    UNIQUE (provider, kind, local_id)
+);
+CREATE TABLE IF NOT EXISTS sync_log (
+    id BIGSERIAL PRIMARY KEY,
+    provider TEXT NOT NULL,
+    direction TEXT NOT NULL,
+    ok BOOLEAN NOT NULL DEFAULT TRUE,
+    summary TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 """
+
+_ready: set[str] = set()
+
+
+def init_workspace(schema: str) -> None:
+    """Create the schema and tables for one workspace (idempotent), once per process."""
+    if schema in _ready:
+        return
+    with db.conn(db.SHARED) as c:  # CREATE SCHEMA is not tied to any workspace
+        c.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+    with db.conn(schema) as c:
+        c.execute(SCHEMA)
+        db.lock_down(c, schema)
+    _ready.add(schema)
+
+
+def drop_workspace(schema: str) -> None:
+    with db.conn(db.SHARED) as c:
+        c.execute(f"DROP SCHEMA IF EXISTS {schema} CASCADE")
+    _ready.discard(schema)
+
 
 STATUSES = ["proposed", "approved", "in_progress", "shipped", "measured"]
 VERDICTS = ["worked", "partial", "did_not_work", "too_early"]
@@ -98,60 +147,6 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-_db_path: contextvars.ContextVar[str] = contextvars.ContextVar("groundwork_db", default=DB_PATH)
-_ready: set[str] = set()
-
-
-def use_db(path: str) -> None:
-    """Point this request (or process) at one user's workspace file, creating it on first use."""
-    path = str(path)
-    _db_path.set(path)
-    if path not in _ready:
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        init_db()
-        _ready.add(path)
-
-
-@contextmanager
-def conn():
-    c = sqlite3.connect(_db_path.get())
-    c.row_factory = sqlite3.Row
-    c.execute("PRAGMA foreign_keys = ON")
-    try:
-        yield c
-        c.commit()
-    finally:
-        c.close()
-
-
-def init_db() -> None:
-    with conn() as c:
-        c.execute("PRAGMA journal_mode = WAL")
-        c.executescript(SCHEMA)
-        _migrate(c)
-
-
-def _migrate(c: sqlite3.Connection) -> None:
-    """Bring databases created by v1 up to date."""
-
-    def cols(table: str) -> set[str]:
-        return {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}
-
-    for table in ("problems", "initiatives"):
-        if "theme_id" not in cols(table):
-            c.execute(f"ALTER TABLE {table} ADD COLUMN theme_id INTEGER REFERENCES themes(id) ON DELETE SET NULL")
-
-
-def rows(sql: str, args: tuple = ()) -> list[dict]:
-    with conn() as c:
-        return [dict(r) for r in c.execute(sql, args).fetchall()]
-
-
-def one(sql: str, args: tuple = ()) -> dict | None:
-    r = rows(sql, args)
-    return r[0] if r else None
-
-
 def _loads(v, default):
     try:
         return json.loads(v)
@@ -161,9 +156,7 @@ def _loads(v, default):
 
 def reset_workspace() -> None:
     with conn() as c:
-        for t in ("outcomes", "dispatches", "stories", "initiatives", "evidence", "problems", "themes", "product"):
-            c.execute(f"DELETE FROM {t}")
-        c.execute("DELETE FROM sqlite_sequence")
+        c.execute("TRUNCATE outcomes, dispatches, stories, initiatives, evidence, problems, themes, product, sync_links RESTART IDENTITY CASCADE")
 
 
 # ---------- product ----------
@@ -202,10 +195,10 @@ def add_evidence(text: str, source: str = "note") -> dict:
         raise ValueError("Evidence text is empty")
     with conn() as c:
         cur = c.execute(
-            "INSERT INTO evidence(source, text, created_at) VALUES (?,?,?)",
+            "INSERT INTO evidence(source, text, created_at) VALUES (?,?,?) RETURNING id",
             (source.strip() or "note", text, now()),
         )
-        eid = cur.lastrowid
+        eid = cur.fetchone()["id"]
     return one("SELECT * FROM evidence WHERE id=?", (eid,))
 
 
@@ -239,10 +232,10 @@ def save_problems(clusters: list[dict]) -> list[int]:
     with conn() as c:
         for cl in clusters:
             cur = c.execute(
-                "INSERT INTO problems(title, summary, persona, severity, created_at) VALUES (?,?,?,?,?)",
+                "INSERT INTO problems(title, summary, persona, severity, created_at) VALUES (?,?,?,?,?) RETURNING id",
                 (cl["title"], cl.get("summary", ""), cl.get("persona", ""), cl.get("severity", "medium"), now()),
             )
-            pid = cur.lastrowid
+            pid = cur.fetchone()["id"]
             ids.append(pid)
             for eid in cl.get("evidence_ids", []):
                 c.execute("UPDATE evidence SET problem_id=? WHERE id=?", (pid, int(eid)))
@@ -274,7 +267,7 @@ def list_problems() -> list[dict]:
            FROM problems p
            LEFT JOIN evidence e ON e.problem_id=p.id
            LEFT JOIN themes t ON t.id=p.theme_id
-           GROUP BY p.id ORDER BY evidence_count DESC, p.id"""
+           GROUP BY p.id, t.title ORDER BY evidence_count DESC, p.id"""
     )
     mix: dict[int, dict[str, int]] = {}
     for r in rows(
@@ -314,8 +307,8 @@ def create_theme(title: str, description: str = "") -> dict:
     if not title:
         raise ValueError("Theme title is empty")
     with conn() as c:
-        cur = c.execute("INSERT INTO themes(title, description, created_at) VALUES (?,?,?)", (title, description.strip(), now()))
-        tid = cur.lastrowid
+        cur = c.execute("INSERT INTO themes(title, description, created_at) VALUES (?,?,?) RETURNING id", (title, description.strip(), now()))
+        tid = cur.fetchone()["id"]
     return one("SELECT * FROM themes WHERE id=?", (tid,))
 
 
@@ -365,7 +358,7 @@ def create_initiative(problem_id: int, spec: dict) -> dict:
         cur = c.execute(
             """INSERT INTO initiatives(problem_id, title, theme, theme_id, persona, problem_statement,
                success_metric, out_of_scope, acceptance_criteria, status, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?, 'proposed', ?)""",
+               VALUES (?,?,?,?,?,?,?,?,?, 'proposed', ?) RETURNING id""",
             (
                 problem_id,
                 spec["title"],
@@ -379,7 +372,7 @@ def create_initiative(problem_id: int, spec: dict) -> dict:
                 now(),
             ),
         )
-        iid = cur.lastrowid
+        iid = cur.fetchone()["id"]
     return get_initiative(iid)
 
 
@@ -476,7 +469,7 @@ def save_stories(iid: int, stories: list[dict], replace: bool = True) -> list[di
     with conn() as c:
         if replace:
             c.execute("DELETE FROM stories WHERE initiative_id=?", (iid,))
-        start = c.execute("SELECT COALESCE(MAX(position), -1) + 1 FROM stories WHERE initiative_id=?", (iid,)).fetchone()[0]
+        start = c.execute("SELECT COALESCE(MAX(position), -1) + 1 AS n FROM stories WHERE initiative_id=?", (iid,)).fetchone()["n"]
         for n, s in enumerate(stories):
             c.execute(
                 "INSERT INTO stories(initiative_id, activity, title, description, acceptance, position, created_at) VALUES (?,?,?,?,?,?,?)",
@@ -537,7 +530,7 @@ def recent_activity(limit: int = 8) -> list[dict]:
                UNION ALL
                SELECT 'outcome', i.id, i.title || ': ' || REPLACE(o.verdict, '_', ' '), o.created_at
                  FROM outcomes o JOIN initiatives i ON i.id=o.initiative_id
-           ) ORDER BY created_at DESC, ref_id DESC LIMIT ?""",
+           ) AS a ORDER BY created_at DESC, ref_id DESC LIMIT ?""",
         (limit,),
     )
 

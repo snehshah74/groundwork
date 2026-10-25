@@ -12,22 +12,53 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Red
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import ai, auth, core
+from starlette.concurrency import run_in_threadpool
+
+from . import ai, auth, core, db, teams
+from .integrations import service as integrations
+from .integrations.base import IntegrationError
 from .seed_data import SEED_EVIDENCE, SEED_PRODUCT
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
 
 app = FastAPI(title="Groundwork")
-auth.init_auth()
+auth.init_shared()
+
+
+SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+def _resolve(session_token: str | None, ws_cookie: str | None):
+    """Session -> (user, active workspace membership). Creates a first workspace when there is none."""
+    user = auth.user_by_session(session_token)
+    if not user:
+        return None, None
+    ws = teams.membership(user["id"], int(ws_cookie)) if ws_cookie and ws_cookie.isdigit() else None
+    if not ws:
+        mine = teams.workspaces_for(user["id"])
+        made = mine[0] if mine else teams.create_workspace(user["id"], (user["name"] or user["email"].split("@")[0]) + "'s workspace")
+        ws = teams.membership(user["id"], made["id"])
+    core.init_workspace(db.schema_name(ws["id"]))
+    return user, ws
 
 
 async def require_user(request: Request) -> dict:
-    """Every workspace route runs as a logged-in user, against that user's own database."""
-    user = auth.user_by_session(request.cookies.get(auth.COOKIE))
+    """Every workspace route runs as a signed-in member, against the active workspace's own schema."""
+    user, ws = await run_in_threadpool(_resolve, request.cookies.get(auth.COOKIE), request.cookies.get(auth.WS_COOKIE))
     if not user:
         raise HTTPException(401, "Please log in to continue.")
-    core.use_db(auth.workspace_path(user["id"]))
-    return user
+    if request.method not in SAFE_METHODS and teams.rank(ws["role"]) < teams.rank("member"):
+        raise HTTPException(403, "You have view-only access to this workspace.")
+    db.use_schema(db.schema_name(ws["id"]))  # set here, in the request's own context, so the endpoint sees it
+    return {"user": user, "ws": ws}
+
+
+def needs(role: str):
+    async def dep(ctx: dict = Depends(require_user)) -> dict:
+        if teams.rank(ctx["ws"]["role"]) < teams.rank(role):
+            raise HTTPException(403, f"This needs {role} access.")
+        return ctx
+    return dep
 
 
 api = APIRouter(prefix="/api", dependencies=[Depends(require_user)])
@@ -35,6 +66,36 @@ public = APIRouter(prefix="/api/auth")
 
 
 # ---------------------------------------------------------------- models
+class ConnectIn(BaseModel):
+    api_key: str = ""
+
+
+class SettingsIn(BaseModel):
+    team_id: str | None = None
+    webhook_secret: str | None = None
+
+
+class ExchangeIn(BaseModel):
+    access_token: str
+
+
+class WorkspaceIn(BaseModel):
+    name: str
+
+
+class InviteIn(BaseModel):
+    email: str
+    role: str = "member"
+
+
+class AcceptIn(BaseModel):
+    token: str
+
+
+class RolePatch(BaseModel):
+    role: str
+
+
 class SignupIn(BaseModel):
     email: str
     password: str
@@ -139,8 +200,8 @@ def _page(name: str) -> FileResponse:
     return FileResponse(STATIC / name, headers={"Cache-Control": "no-store"})
 
 
-def _logged_in(request: Request) -> bool:
-    return auth.user_by_session(request.cookies.get(auth.COOKIE)) is not None
+def _session_user(request: Request) -> dict | None:
+    return auth.user_by_session(request.cookies.get(auth.COOKIE))
 
 
 @app.get("/")
@@ -150,17 +211,37 @@ def landing():
 
 @app.get("/login")
 def login_page(request: Request):
-    return RedirectResponse("/app") if _logged_in(request) else _page("login.html")
+    return RedirectResponse("/app") if _session_user(request) else _page("login.html")
 
 
 @app.get("/signup")
 def signup_page(request: Request):
-    return RedirectResponse("/app") if _logged_in(request) else _page("signup.html")
+    return RedirectResponse("/app") if _session_user(request) else _page("signup.html")
+
+
+@app.get("/auth/callback")
+def auth_callback():
+    return _page("callback.html")
+
+
+@app.get("/invite/{token}")
+def invite_page(token: str):
+    return _page("invite.html")
 
 
 @app.get("/app")
 def app_page(request: Request):
-    return _page("app.html") if _logged_in(request) else RedirectResponse("/login")
+    return _page("app.html") if _session_user(request) else RedirectResponse("/login")
+
+
+@app.get("/api/config")
+def config():
+    """Public settings the sign-in pages need. The anon key is designed to be public."""
+    return {
+        "mode": "supabase" if auth.supabase_enabled() else "local",
+        "supabase_url": auth.SUPABASE_URL if auth.supabase_enabled() else "",
+        "supabase_anon_key": auth.SUPABASE_ANON_KEY if auth.supabase_enabled() else "",
+    }
 
 
 # ---------------------------------------------------------------- accounts
@@ -175,8 +256,12 @@ def _throttled(key: str) -> bool:
     return len(hits) >= MAX_FAILURES
 
 
+def _ip(request: Request) -> str:
+    return request.client.host if request.client else "?"
+
+
 def _start_session(user: dict) -> JSONResponse:
-    resp = JSONResponse({"user": {k: user[k] for k in ("id", "email", "name")}})
+    resp = JSONResponse({"user": user})
     resp.set_cookie(
         auth.COOKIE, auth.create_session(user["id"]), max_age=auth.SESSION_DAYS * 86400,
         httponly=True, samesite="lax", secure=auth.SECURE_COOKIES, path="/",
@@ -184,9 +269,31 @@ def _start_session(user: dict) -> JSONResponse:
     return resp
 
 
+def _local_only():
+    if auth.supabase_enabled():
+        raise HTTPException(404, "Use the sign-in options on the login page.")
+
+
+@public.post("/exchange")
+def exchange(body: ExchangeIn, request: Request):
+    """Trade a Supabase access token (Google, Microsoft or email sign-in) for a Groundwork session."""
+    key = f"exchange:{_ip(request)}"
+    if _throttled(key):
+        raise HTTPException(429, "Too many attempts. Try again in a few minutes.")
+    _failures.setdefault(key, []).append(time.time())
+    try:
+        claims = auth.verify_supabase_token(body.access_token)
+    except ValueError as e:
+        raise HTTPException(401, str(e))
+    meta = claims.get("user_metadata") or {}
+    user = auth.upsert_supabase_user(claims["sub"], claims["email"], meta.get("full_name") or meta.get("name") or "")
+    return _start_session(user)
+
+
 @public.post("/signup")
 def signup(body: SignupIn, request: Request):
-    key = f"signup:{request.client.host if request.client else '?'}"
+    _local_only()
+    key = f"signup:{_ip(request)}"
     if _throttled(key):
         raise HTTPException(429, "Too many attempts. Try again in a few minutes.")
     _failures.setdefault(key, []).append(time.time())
@@ -194,13 +301,13 @@ def signup(body: SignupIn, request: Request):
         user = auth.create_user(body.email, body.password, body.name)
     except ValueError as e:
         _bad(e)
-    core.use_db(auth.workspace_path(user["id"]))
     return _start_session(user)
 
 
 @public.post("/login")
 def login(body: LoginIn, request: Request):
-    key = f"login:{request.client.host if request.client else '?'}:{body.email.strip().lower()}"
+    _local_only()
+    key = f"login:{_ip(request)}:{body.email.strip().lower()}"
     if _throttled(key):
         raise HTTPException(429, "Too many attempts. Try again in a few minutes.")
     user = auth.authenticate(body.email, body.password)
@@ -216,13 +323,84 @@ def logout(request: Request):
     auth.delete_session(request.cookies.get(auth.COOKIE))
     resp = JSONResponse({"ok": True})
     resp.delete_cookie(auth.COOKIE, path="/")
+    resp.delete_cookie(auth.WS_COOKIE, path="/")
     return resp
 
 
 @public.get("/me")
 def me(request: Request):
     """Always 200 so public pages can check for a session without a console error."""
-    return {"user": auth.user_by_session(request.cookies.get(auth.COOKIE))}
+    user, ws = _resolve(request.cookies.get(auth.COOKIE), request.cookies.get(auth.WS_COOKIE))
+    if not user:
+        return {"user": None}
+    return {"user": user, "workspace": {"id": ws["id"], "name": ws["name"], "role": ws["role"]},
+            "workspaces": teams.workspaces_for(user["id"]), "api_token": ws["api_token"]}
+
+
+def _need_session(request: Request) -> dict:
+    user = _session_user(request)
+    if not user:
+        raise HTTPException(401, "Please log in to continue.")
+    return user
+
+
+@public.post("/workspaces")
+def create_workspace(body: WorkspaceIn, request: Request):
+    user = _need_session(request)
+    try:
+        ws = teams.create_workspace(user["id"], body.name)
+    except ValueError as e:
+        _bad(e)
+    resp = JSONResponse(ws)
+    resp.set_cookie(auth.WS_COOKIE, str(ws["id"]), httponly=True, samesite="lax", secure=auth.SECURE_COOKIES, path="/")
+    return resp
+
+
+@public.post("/workspaces/{wid}/switch")
+def switch_workspace(wid: int, request: Request):
+    user = _need_session(request)
+    if not teams.membership(user["id"], wid):
+        raise HTTPException(404, "Workspace not found.")
+    resp = JSONResponse({"ok": True})
+    resp.set_cookie(auth.WS_COOKIE, str(wid), httponly=True, samesite="lax", secure=auth.SECURE_COOKIES, path="/")
+    return resp
+
+
+@public.post("/workspaces/{wid}/leave")
+def leave_workspace(wid: int, request: Request):
+    user = _need_session(request)
+    m = teams.membership(user["id"], wid)
+    if not m:
+        raise HTTPException(404, "Workspace not found.")
+    try:
+        teams.remove_member(wid, user["id"], m["role"])
+    except ValueError as e:
+        _bad(e)
+    resp = JSONResponse({"ok": True})
+    resp.delete_cookie(auth.WS_COOKIE, path="/")
+    return resp
+
+
+@public.get("/invites/{token}")
+def invite_preview(token: str):
+    inv = teams.invite_preview(token)
+    if not inv:
+        raise HTTPException(404, "This invite link is invalid or has expired.")
+    return inv
+
+
+@public.post("/invites/accept")
+def accept_invite(body: AcceptIn, request: Request):
+    user = _need_session(request)
+    try:
+        ws = teams.accept_invite(body.token, user)
+    except PermissionError as e:
+        raise HTTPException(403, str(e))
+    except ValueError as e:
+        _bad(e)
+    resp = JSONResponse(ws)
+    resp.set_cookie(auth.WS_COOKIE, str(ws["id"]), httponly=True, samesite="lax", secure=auth.SECURE_COOKIES, path="/")
+    return resp
 
 
 @api.get("/status")
@@ -528,6 +706,157 @@ def ask(body: AskIn):
     return {"mode": "offline", "answer": "\n".join(lines)}
 
 
+# ---------------------------------------------------------------- team
+@api.get("/team")
+def team_overview(ctx: dict = Depends(require_user)):
+    ws = ctx["ws"]
+    admin = teams.rank(ws["role"]) >= teams.rank("admin")
+    return {
+        "workspace": {"id": ws["id"], "name": ws["name"], "role": ws["role"]},
+        "members": teams.list_members(ws["id"]),
+        "invites": teams.list_invites(ws["id"]) if admin else [],
+        "roles": teams.ROLES,
+        "you": ctx["user"]["id"],
+    }
+
+
+@api.patch("/team/workspace")
+def rename_workspace(body: WorkspaceIn, ctx: dict = Depends(needs("admin"))):
+    try:
+        teams.rename_workspace(ctx["ws"]["id"], body.name)
+    except ValueError as e:
+        _bad(e)
+    return {"ok": True}
+
+
+@api.delete("/team/workspace")
+def delete_workspace(ctx: dict = Depends(needs("owner"))):
+    teams.delete_workspace(ctx["ws"]["id"])
+    resp = JSONResponse({"deleted": True})
+    resp.delete_cookie(auth.WS_COOKIE, path="/")
+    return resp
+
+
+@api.post("/team/invites")
+def create_invite(body: InviteIn, request: Request, ctx: dict = Depends(needs("admin"))):
+    try:
+        inv = teams.create_invite(ctx["ws"]["id"], body.email, body.role, ctx["user"]["id"])
+    except ValueError as e:
+        _bad(e)
+    link = f"{str(request.base_url).rstrip('/')}/invite/{inv.pop('token')}"
+    return {**inv, "link": link}
+
+
+@api.delete("/team/invites/{invite_id}")
+def revoke_invite(invite_id: int, ctx: dict = Depends(needs("admin"))):
+    if not teams.revoke_invite(ctx["ws"]["id"], invite_id):
+        raise HTTPException(404, "Invite not found")
+    return {"deleted": invite_id}
+
+
+@api.patch("/team/members/{user_id}")
+def change_role(user_id: int, body: RolePatch, ctx: dict = Depends(needs("admin"))):
+    try:
+        teams.set_role(ctx["ws"]["id"], user_id, body.role, ctx["ws"]["role"])
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        _bad(e)
+    return {"ok": True}
+
+
+@api.delete("/team/members/{user_id}")
+def remove_member(user_id: int, ctx: dict = Depends(needs("admin"))):
+    try:
+        teams.remove_member(ctx["ws"]["id"], user_id, ctx["ws"]["role"])
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except ValueError as e:
+        _bad(e)
+    return {"deleted": user_id}
+
+
+@api.post("/team/token/rotate")
+def rotate_token(ctx: dict = Depends(require_user)):
+    return {"api_token": teams.rotate_token(ctx["ws"]["id"], ctx["user"]["id"])}
+
+
+# ---------------------------------------------------------------- integrations
+def _integration_call(fn, *args):
+    try:
+        return fn(*args)
+    except IntegrationError as e:
+        raise HTTPException(400, str(e))
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+
+
+def _with_urls(state: dict, request: Request) -> dict:
+    if state.get("connected") and state.get("webhook_token"):
+        state["webhook_url"] = f"{str(request.base_url).rstrip('/')}/api/webhooks/{state['id']}/{state.pop('webhook_token')}"
+    state.pop("webhook_token", None)
+    return state
+
+
+@api.get("/integrations")
+def list_integrations(request: Request):
+    return [_with_urls(s, request) for s in integrations.catalog_state()]
+
+
+@api.post("/integrations/{provider}/connect")
+def connect_integration(provider: str, body: ConnectIn, request: Request, ctx: dict = Depends(needs("admin"))):
+    st = _integration_call(integrations.connect, provider, body.model_dump(), ctx["user"]["id"], ctx["ws"]["id"])
+    return _with_urls(st, request)
+
+
+@api.patch("/integrations/{provider}")
+def update_integration(provider: str, body: SettingsIn, request: Request, ctx: dict = Depends(needs("admin"))):
+    return _with_urls(_integration_call(integrations.update_settings, provider, body.team_id, body.webhook_secret), request)
+
+
+@api.post("/integrations/{provider}/test")
+def test_integration(provider: str, request: Request, ctx: dict = Depends(needs("admin"))):
+    return _with_urls(_integration_call(integrations.test, provider), request)
+
+
+@api.delete("/integrations/{provider}")
+def disconnect_integration(provider: str, ctx: dict = Depends(needs("admin"))):
+    integrations.disconnect(provider)
+    return {"disconnected": provider}
+
+
+@api.post("/integrations/{provider}/sync")
+def sync_integration(provider: str):
+    return _integration_call(integrations.sync, provider)
+
+
+@api.get("/integrations/{provider}/log")
+def integration_log(provider: str):
+    return integrations.recent_log(provider)
+
+
+@api.post("/initiatives/{iid}/push/{provider}")
+def push_initiative(iid: int, provider: str):
+    return _integration_call(integrations.push, provider, iid)
+
+
+@api.get("/initiatives/{iid}/links")
+def initiative_links(iid: int):
+    return integrations.links_for(iid)
+
+
+@app.post("/api/webhooks/{provider}/{token}")
+async def webhook(provider: str, token: str, request: Request):
+    """Called by the other tool, not by a signed-in user. The secret URL token picks the workspace and the signature proves the sender."""
+    body = await request.body()
+    try:
+        return await run_in_threadpool(integrations.handle_webhook, provider, token, body, {k.lower(): v for k, v in request.headers.items()})
+    except LookupError:
+        raise HTTPException(404, "Unknown webhook")
+    except PermissionError as e:
+        raise HTTPException(401, str(e))
+
+
 # ---------------------------------------------------------------- demo data
 @api.post("/seed")
 def seed():
@@ -541,7 +870,7 @@ def seed():
 
 
 @api.post("/reset")
-def reset():
+def reset(ctx: dict = Depends(needs("admin"))):
     core.reset_workspace()
     return {"reset": True}
 

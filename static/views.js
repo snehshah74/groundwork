@@ -256,11 +256,12 @@ function storyMapHTML(i) {
 
 G.views.initiative = async r => {
   const tab = TABS.some(t => t[0] === r.tab) ? r.tab : 'spec';
-  const [i, themes] = await Promise.all([api('/initiatives/' + r.id), api('/themes')]);
+  const [i, themes, ilinks] = await Promise.all([api('/initiatives/' + r.id), api('/themes'), api(`/initiatives/${r.id}/links`)]);
   G.cur = i;
   const header = `<a class="crumb" href="#/initiatives">Initiatives</a>
     <header><input class="bare title-input" data-change="init-field" data-id="${i.id}" data-field="title" value="${esc(i.title)}" aria-label="Initiative title">
     <div class="actions" style="margin-top:10px"><span class="sub">From <a href="#/problems/${i.problem_id}">${esc(i.problem_title)}</a></span>
+      ${ilinks.filter(l => l.kind === 'initiative').map(l => `<a class="tag initiative" href="${esc(l.external_url)}" target="_blank" rel="noopener" title="${esc(l.provider)}">${esc(l.external_key)} &middot; ${esc(l.external_status)}</a>`).join('')}
       <label class="actions" style="gap:6px"><span class="muted small">Theme</span><select data-change="init-theme" data-id="${i.id}"><option value="">None</option>
       ${themes.map(t => `<option value="${t.id}" ${i.theme_id === t.id ? 'selected' : ''}>${esc(t.title)}</option>`).join('')}</select></label></div>
     <div class="steps" role="group" aria-label="Status">${STATUSES.map(([k, l]) => `<button class="step" aria-pressed="${i.status === k}" data-act="set-status" data-id="${i.id}" data-status="${k}">${l}</button>`).join('')}</div></header>
@@ -280,7 +281,7 @@ G.views.initiative = async r => {
   } else if (tab === 'trace') {
     body = `<p class="sub" style="max-width:62ch;margin-top:0">Read from the bottom up: what customers said, the problem it revealed, the theme it serves, the initiative, the stories, the hand-off, and the measured result. Hatched layers are missing.</p>${traceHTML(i)}`;
   } else if (tab === 'handoff') {
-    const ctx = await api(`/initiatives/${i.id}/context`);
+    const [ctx, integs, links] = await Promise.all([api(`/initiatives/${i.id}/context`), api('/integrations'), api(`/initiatives/${i.id}/links`)]);
     const prompt = `Implement Groundwork initiative ${i.id}. Call get_product_context, then get_initiative_context with initiative_id ${i.id}, build it story by story, and call report_outcome when it ships.`;
     const mcpCmd = `claude mcp add groundwork -e GROUNDWORK_TOKEN=${G.me.api_token} -- ${'${PWD}'}/.venv/bin/python ${'${PWD}'}/mcp_server.py`;
     G.cur.ctx = ctx; G.cur.prompt = prompt;
@@ -291,6 +292,7 @@ G.views.initiative = async r => {
           <div class="actions" style="margin-top:10px"><button class="btn small" data-act="copy-text" data-msg="Command copied" data-text="${esc(mcpCmd)}">Copy command</button></div></div>
         <div class="panel"><h2>2. Tell the agent what to build</h2><pre class="brief" style="max-height:none">${esc(prompt)}</pre>
           <div class="actions" style="margin-top:10px"><button class="btn small" data-act="copy-prompt">Copy prompt</button></div></div>
+        ${trackerPanel(i, integs, links)}
         <div class="panel"><h2>No agent connected? Paste the brief</h2><p class="sub small">Works in any tool. Copying counts as a hand-off.</p>
           <div class="actions"><button class="btn primary" data-act="copy-brief" data-id="${i.id}">Copy brief</button><a class="btn" href="/api/initiatives/${i.id}/tickets.csv" download>Export tickets (CSV)</a></div></div></div>
       <div><h2 class="section-title">What the agent receives</h2><pre class="brief">${esc(ctx)}</pre>

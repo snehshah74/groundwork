@@ -58,7 +58,7 @@ function modal({ title, fields, submit = 'Save', onSubmit, onDelete }) {
     <h2>${esc(title)}</h2>
     ${fields.map(f => `<label class="field"><span>${esc(f.label)}</span>${f.type === 'textarea'
       ? `<textarea name="${f.name}" rows="${f.rows || 3}" placeholder="${esc(f.placeholder || '')}">${esc(f.value || '')}</textarea>`
-      : `<input name="${f.name}" type="text" value="${esc(f.value || '')}" placeholder="${esc(f.placeholder || '')}">`}</label>`).join('')}
+      : `<input name="${f.name}" type="${f.type === 'password' ? 'password' : 'text'}" autocomplete="off" value="${esc(f.value || '')}" placeholder="${esc(f.placeholder || '')}">`}</label>`).join('')}
     <div class="dlg-actions"><span>${onDelete ? '<button class="btn danger" type="button" id="dlg-del">Delete</button>' : ''}</span>
       <span class="actions"><button class="btn quiet" type="button" id="dlg-cancel">Cancel</button><button class="btn primary" type="submit">${esc(submit)}</button></span></div>
   </form>`;
@@ -80,16 +80,19 @@ function parseHash() {
   const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
   return { view: parts[0] || 'home', id: parts[1] ? +parts[1] : null, tab: parts[2] || null };
 }
-const NAV_OF = { home: 'home', canvas: 'canvas', evidence: 'evidence', problems: 'problems', strategy: 'strategy', initiatives: 'initiatives', initiative: 'initiatives' };
+const NAV_OF = { home: 'home', canvas: 'canvas', integrations: 'integrations', team: 'team', evidence: 'evidence', problems: 'problems', strategy: 'strategy', initiatives: 'initiatives', initiative: 'initiatives' };
 
 async function refreshRail() {
   const s = await api('/status');
   G.status = s;
   if (!G.me) {
-    G.me = (await api('/auth/me')).user;
-    if (!G.me) { location.href = '/login'; return s; }
+    const d = await api('/auth/me');
+    if (!d.user) { location.href = '/login'; return s; }
+    G.me = { ...d.user, api_token: d.api_token, workspace: d.workspace, workspaces: d.workspaces };
     $('#acct-name').textContent = G.me.name || G.me.email.split('@')[0];
     $('#acct-email').textContent = G.me.email;
+    $('#ws-switch').innerHTML = d.workspaces.map(w => `<option value="${w.id}" ${w.id === d.workspace.id ? 'selected' : ''}>${esc(w.name)}</option>`).join('')
+      + '<option value="new">+ New workspace</option>';
   }
   $('#n-evidence').textContent = s.evidence || '';
   $('#n-problems').textContent = s.problems || '';
@@ -112,7 +115,7 @@ async function render() {
     const fn = G.views[r.view] || G.views.home;
     const html = await fn(r);
     if (token !== G.token) return;
-    if (typeof html === 'string') m.innerHTML = html;
+    if (typeof html === 'string') m.innerHTML = (G.me && G.me.workspace.role === 'viewer' ? '<div class="banner"><span>You have <b>view-only</b> access to this workspace.</span></div>' : '') + html;
     if (G.after) { const f = G.after; G.after = null; f(); }
   } catch (e) {
     if (token !== G.token) return;
@@ -124,6 +127,15 @@ document.addEventListener('click', e => { // clicking the page you are already o
   const a = e.target.closest('a[href^="#/"]');
   if (a && a.getAttribute('href') === location.hash) render();
 });
+
+G.changes['ws-switch'] = async t => {
+  if (t.value === 'new') {
+    t.value = G.me.workspace.id;
+    return modal({ title: 'New workspace', submit: 'Create workspace', fields: [{ name: 'name', label: 'Name', placeholder: 'For example, Payments team' }],
+      onSubmit: async v => { await api('/auth/workspaces', { method: 'POST', body: { name: v.name } }); location.href = '/app#/home'; location.reload(); } });
+  }
+  await api(`/auth/workspaces/${t.value}/switch`, { method: 'POST' }); location.href = '/app#/home'; location.reload();
+};
 
 /* ---------- events ---------- */
 document.addEventListener('click', e => {

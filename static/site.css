@@ -46,6 +46,8 @@ button, input { font: inherit; color: inherit; }
 .skip { position: absolute; left: 12px; top: -60px; background: var(--dp-color-accent); color: var(--dp-color-on-accent); padding: 10px 14px; border-radius: 8px; z-index: 20; }
 .skip:focus { top: 12px; }
 .wrap { max-width: calc(var(--wrap) + var(--gutter) * 2); margin: 0 auto; padding: 0 var(--gutter); }
+[hidden] { display: none !important; }
+.stack-12 { display: grid; gap: 12px; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 
 /* ---------- buttons ---------- */
@@ -213,6 +215,14 @@ section.block { padding: 112px 0; }
 .form-error.show { display: block; }
 .auth-card .alt { margin-top: 24px; text-align: center; color: var(--dp-color-ink-secondary); font-size: var(--dp-typography-small); }
 .auth-card .alt a { color: var(--dp-color-accent); font-weight: 600; }
+
+.oauth { display: grid; gap: 10px; }
+.oauth .btn { justify-content: center; gap: 10px; }
+.oauth .btn svg { width: 20px; height: 20px; }
+.or { display: flex; align-items: center; gap: 14px; margin: 22px 0; color: var(--dp-color-ink-secondary); font-size: var(--dp-typography-metadata); }
+.or::before, .or::after { content: ""; flex: 1; height: 1px; background: var(--dp-color-rule); }
+.form-note { display: none; padding: 11px 14px; border-radius: 8px; background: #e9f0fe; border: 1px solid #b9cdf8; color: #0a3aa8; font-size: var(--dp-typography-small); }
+.form-note.show { display: block; }
 
 /* ---------- responsive ---------- */
 @media (max-width: 1050px) {

@@ -76,10 +76,10 @@ def test_connect_rejects_bad_key_and_hides_secrets(client, fake):
     r = owner.post("/api/integrations/linear/connect", json={"api_key": "nope"})
     assert r.status_code == 400 and "rejected" in r.json()["detail"]
     r = owner.post("/api/integrations/linear/connect", json={"api_key": GOOD_KEY})
-    assert r.status_code == 200 and r.json()["connected"] and r.json()["config"]["team_id"] == "team-1"  # single team auto-selected
+    assert r.status_code == 200 and r.json()["connected"] and r.json()["config"]["target_id"] == "team-1"  # single team auto-selected
     assert GOOD_KEY not in owner.get("/api/integrations").text
     cat = {i["id"]: i for i in owner.get("/api/integrations").json()}
-    assert cat["linear"]["status"] == "ready" and cat["jira"]["status"] == "soon" and cat["gmail"]["status"] == "soon"
+    assert cat["linear"]["status"] == "ready" and cat["jira"]["status"] == "ready" and cat["asana"]["status"] == "soon" and cat["gmail"]["status"] == "soon"
     assert cat["linear"]["webhook_url"].startswith("http://testserver/api/webhooks/linear/")
 
 
@@ -119,10 +119,10 @@ def test_push_needs_a_team_when_several(client, monkeypatch):
     owner = signup(client, "o@x.com")
     iid = make_initiative(owner)
     st = owner.post("/api/integrations/linear/connect", json={"api_key": GOOD_KEY}).json()
-    assert st["config"]["team_id"] == "" and len(st["config"]["teams"]) == 2
+    assert st["config"]["target_id"] == "" and len(st["config"]["targets"]) == 2
     assert "Choose which Linear team" in owner.post(f"/api/initiatives/{iid}/push/linear").json()["detail"]
-    assert owner.patch("/api/integrations/linear", json={"team_id": "team-evil"}).status_code == 400
-    assert owner.patch("/api/integrations/linear", json={"team_id": "team-2"}).status_code == 200
+    assert owner.patch("/api/integrations/linear", json={"target_id": "team-evil"}).status_code == 400
+    assert owner.patch("/api/integrations/linear", json={"target_id": "team-2"}).status_code == 200
     assert owner.post(f"/api/initiatives/{iid}/push/linear").status_code == 200
 
 
@@ -216,4 +216,4 @@ def test_disconnect_removes_links_and_webhook(client, fake):
 
 def test_unavailable_provider(client):
     owner = signup(client, "o@x.com")
-    assert owner.post("/api/integrations/jira/connect", json={"api_key": "x"}).status_code == 400
+    assert owner.post("/api/integrations/asana/connect", json={"api_key": "x"}).status_code == 400

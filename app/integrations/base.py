@@ -42,6 +42,9 @@ class Meta:
     auth: str = "api_key"        # 'api_key' | 'oauth'
     fields: list[Field] = field(default_factory=list)
     status: str = "soon"         # 'ready' | 'soon'
+    target_label: str = "team"   # what the user picks to send work to: team, project, list...
+    webhooks: bool = False       # can it push status changes to us?
+    webhook_help: str = ""       # one sentence telling an admin where to create the webhook in the other tool
 
 
 class Integration:
@@ -64,6 +67,11 @@ class Integration:
     def verify_webhook(self, cfg: dict, secret: dict, body: bytes, headers: dict) -> dict:
         """Check the signature and return the parsed event. Raise IntegrationError when it is not genuine."""
         raise NotImplementedError
+
+    def parse_event(self, event: dict) -> dict | None:
+        """Reduce a verified webhook event to {external_id, state_type, state_name, url, key}, or None to ignore it.
+        state_type is one of triage, backlog, unstarted, started, completed (the vocabulary of STATE_TO_STATUS)."""
+        return None
 
     # --- discovery
     def import_evidence(self, cfg: dict, secret: dict, since: str | None) -> list[dict]:
@@ -102,15 +110,19 @@ def story_markdown(s: dict) -> str:
     return "\n".join(parts).strip()
 
 
-# Groundwork status <- tracker state type. Never moves an initiative backwards past 'shipped' once measured.
+# Groundwork status <- tracker state type. Statuses only ever move forward from a tracker.
+STATUS_ORDER = ["proposed", "approved", "in_progress", "shipped", "measured"]
 STATE_TO_STATUS = {"triage": "proposed", "backlog": "proposed", "unstarted": "approved", "started": "in_progress", "completed": "shipped"}
 
 
 def next_status(current: str, state_type: str) -> str | None:
-    """Status an initiative should take when its tracker issue is in `state_type`, or None to leave it alone."""
+    """Status an initiative should take when its tracker issue is in `state_type`, or None to leave it alone.
+
+    Forward only. A just-pushed issue sits in Backlog while the initiative is already "in progress" (pushing is the
+    hand-off), and a reopened or mis-dragged issue should not un-ship or un-measure work. Teams that want to go back
+    can still set the status by hand.
+    """
     target = STATE_TO_STATUS.get(state_type)
-    if not target or target == current:
+    if not target or current not in STATUS_ORDER:
         return None
-    if current == "measured" and target == "shipped":
-        return None
-    return target
+    return target if STATUS_ORDER.index(target) > STATUS_ORDER.index(current) else None

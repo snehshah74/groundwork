@@ -51,12 +51,13 @@ def _store(provider: str, cfg: dict, secret: dict, user_id: int | None, webhook_
 
 def connect(provider: str, credentials: dict, user_id: int, workspace_id: int) -> dict:
     integ = _integration(provider)
-    cfg, secret = integ.connect(credentials)
+    declared = {f.name for f in integ.meta.fields} | {"access_token"}
+    cfg, secret = integ.connect({k: str(v).strip() for k, v in credentials.items() if k in declared and isinstance(v, (str, int))})
     token = (_row(provider) or {}).get("webhook_token") or secrets.token_urlsafe(24)
     existing = _row(provider)
     if existing:  # reconnecting keeps the saved webhook secret and chosen team
         old_cfg, old_secret, _ = _load(provider)
-        cfg["team_id"] = cfg.get("team_id") or old_cfg.get("team_id", "")
+        cfg["target_id"] = cfg.get("target_id") or old_cfg.get("target_id", "")
         if old_secret.get("webhook_secret"):
             secret["webhook_secret"] = old_secret["webhook_secret"]
     _store(provider, cfg, secret, user_id, token)
@@ -66,12 +67,13 @@ def connect(provider: str, credentials: dict, user_id: int, workspace_id: int) -
     return public_state(provider)
 
 
-def update_settings(provider: str, team_id: str | None = None, webhook_secret: str | None = None) -> dict:
+def update_settings(provider: str, target_id: str | None = None, webhook_secret: str | None = None) -> dict:
     cfg, secret, row = _load(provider)
-    if team_id is not None:
-        if team_id and not any(t["id"] == team_id for t in cfg.get("teams", [])):
-            raise IntegrationError("That team is not available to this connection.")
-        cfg["team_id"] = team_id
+    if target_id is not None:
+        label = _integration(provider).meta.target_label
+        if target_id and not any(t["id"] == target_id for t in cfg.get("targets", [])):
+            raise IntegrationError(f"That {label} is not available to this connection.")
+        cfg["target_id"] = target_id
     if webhook_secret is not None:
         secret["webhook_secret"] = webhook_secret.strip()
     _store(provider, cfg, secret, row["connected_by"])
@@ -90,8 +92,8 @@ def disconnect(provider: str) -> None:
 
 def test(provider: str) -> dict:
     cfg, secret, _ = _load(provider)
-    new_cfg, _ = _integration(provider).connect({"api_key": secret.get("api_key", ""), "access_token": secret.get("access_token")})
-    cfg["teams"] = new_cfg.get("teams", cfg.get("teams"))
+    new_cfg, _ = _integration(provider).connect({k: v for k, v in secret.items() if k != "webhook_secret"})
+    cfg["targets"] = new_cfg.get("targets", cfg.get("targets"))
     _store(provider, cfg, secret, None)
     return public_state(provider)
 
@@ -101,14 +103,16 @@ def public_state(provider: str) -> dict:
     meta = next((m for m in catalog.all_metas() if m.id == provider), None)
     row = _row(provider)
     out = {"id": meta.id, "name": meta.name, "kind": meta.kind, "description": meta.description, "status": meta.status,
-           "auth": meta.auth, "fields": [asdict(f) for f in meta.fields], "connected": bool(row)}
+           "auth": meta.auth, "fields": [asdict(f) for f in meta.fields], "connected": bool(row),
+           "webhooks": meta.webhooks, "webhook_help": meta.webhook_help}
     if row:
         cfg = json.loads(row["config"])
         try:
             has_whsec = bool(json.loads(crypto.decrypt(row["secret"])).get("webhook_secret"))
         except crypto.SecretKeyMissing:
             has_whsec = False
-        out.update({"config": {"account": cfg.get("viewer", ""), "teams": cfg.get("teams", []), "team_id": cfg.get("team_id", "")},
+        out.update({"config": {"account": cfg.get("viewer", ""), "targets": cfg.get("targets", []), "target_id": cfg.get("target_id", ""),
+                               "target_label": meta.target_label, "last_import": cfg.get("last_import", "")},
                     "webhook_token": row["webhook_token"], "has_webhook_secret": has_whsec,
                     "last_log": core.one("SELECT direction, ok, summary, created_at FROM sync_log WHERE provider=? ORDER BY id DESC LIMIT 1", (provider,))})
     return out
@@ -171,9 +175,10 @@ def push(provider: str, initiative_id: int) -> dict:
         raise
     _save_links(provider, links)
     core.record_dispatch(initiative_id, provider)
-    created = sum(1 for l in links if (l.kind, l.local_id) not in existing)
-    log(provider, "push", True, f"{i['title']}: {created} created, {len(links) - created} updated")
-    return {"links": [asdict(l) for l in links], "created": created, "updated": len(links) - created}
+    items = [l for l in links if l.kind in ("initiative", "story")]     # providers may keep bookkeeping links (e.g. a checklist id)
+    created = sum(1 for l in items if (l.kind, l.local_id) not in existing)
+    log(provider, "push", True, f"{i['title']}: {created} created, {len(items) - created} updated")
+    return {"links": [asdict(l) for l in items], "created": created, "updated": len(items) - created}
 
 
 def _apply(provider: str, link: Link, state_type: str, state_name: str, url: str = "") -> str | None:
@@ -221,18 +226,19 @@ def handle_webhook(provider: str, token: str, body: bytes, headers: dict) -> dic
     core.init_workspace(schema)
     db.use_schema(schema)
     cfg, secret, _ = _load(provider)
+    integ = _integration(provider)
     try:
-        event = _integration(provider).verify_webhook(cfg, secret, body, headers)
+        event = integ.verify_webhook(cfg, secret, body, headers)
     except IntegrationError as e:
         log(provider, "pull", False, f"Rejected webhook: {e}")
         raise PermissionError(str(e)) from e
-    data = event.get("data") or {}
-    if event.get("type") != "Issue" or not data.get("id") or not data.get("state"):
+    info = integ.parse_event(event)
+    if not info:
         return {"ignored": True}
-    row = core.one("SELECT * FROM sync_links WHERE provider=? AND external_id=?", (provider, data["id"]))
+    row = core.one("SELECT * FROM sync_links WHERE provider=? AND external_id=?", (provider, info["external_id"]))
     if not row:
         return {"ignored": True}
     link = Link(row["kind"], row["local_id"], row["external_id"])
-    new = _apply(provider, link, data["state"].get("type", ""), data["state"].get("name", ""), event.get("url", ""))
-    log(provider, "pull", True, f"{row['external_key'] or data['id']} is now {data['state'].get('name')}" + (f"; initiative moved to {new}" if new else ""))
+    new = _apply(provider, link, info["state_type"], info["state_name"], info.get("url", ""))
+    log(provider, "pull", True, f"{row['external_key'] or info['external_id']} is now {info['state_name']}" + (f"; initiative moved to {new}" if new else ""))
     return {"ok": True, "status": new}

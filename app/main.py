@@ -7,7 +7,7 @@ from pathlib import Path
 
 import time
 
-from fastapi import APIRouter, Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Body, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -66,12 +66,8 @@ public = APIRouter(prefix="/api/auth")
 
 
 # ---------------------------------------------------------------- models
-class ConnectIn(BaseModel):
-    api_key: str = ""
-
-
 class SettingsIn(BaseModel):
-    team_id: str | None = None
+    target_id: str | None = None
     webhook_secret: str | None = None
 
 
@@ -496,7 +492,8 @@ def analyze(body: AnalyzeIn = AnalyzeIn()):
         raise HTTPException(400, "No ungrouped evidence to analyze. Add some first.")
     clusters, mode = ai.cluster_evidence(items)
     ids = core.save_problems(clusters)
-    return {"mode": mode, "problems_created": len(ids), "evidence_analyzed": len(items)}
+    analyzed = sum(len(c["evidence_ids"]) for c in clusters)
+    return {"mode": mode, "problems_created": len(ids), "evidence_analyzed": analyzed, "remaining": len(items) - analyzed}
 
 
 @api.get("/problems")
@@ -804,14 +801,14 @@ def list_integrations(request: Request):
 
 
 @api.post("/integrations/{provider}/connect")
-def connect_integration(provider: str, body: ConnectIn, request: Request, ctx: dict = Depends(needs("admin"))):
-    st = _integration_call(integrations.connect, provider, body.model_dump(), ctx["user"]["id"], ctx["ws"]["id"])
+def connect_integration(provider: str, request: Request, body: dict = Body(...), ctx: dict = Depends(needs("admin"))):
+    st = _integration_call(integrations.connect, provider, body, ctx["user"]["id"], ctx["ws"]["id"])
     return _with_urls(st, request)
 
 
 @api.patch("/integrations/{provider}")
 def update_integration(provider: str, body: SettingsIn, request: Request, ctx: dict = Depends(needs("admin"))):
-    return _with_urls(_integration_call(integrations.update_settings, provider, body.team_id, body.webhook_secret), request)
+    return _with_urls(_integration_call(integrations.update_settings, provider, body.target_id, body.webhook_secret), request)
 
 
 @api.post("/integrations/{provider}/test")

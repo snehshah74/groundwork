@@ -10,6 +10,7 @@ import os
 import re
 
 MODEL = os.environ.get("GROUNDWORK_MODEL", "claude-sonnet-5-5")
+MAX_CLUSTER_ITEMS = 250   # per analysis run; anything beyond stays ungrouped for the next run
 
 
 def ai_enabled() -> bool:
@@ -62,9 +63,10 @@ def cluster_evidence(items: list[dict]) -> tuple[list[dict], str]:
         return [], "none"
     if ai_enabled():
         try:
-            payload = [{"id": e["id"], "source": e["source"], "text": e["text"][:500]} for e in items[:250]]
+            batch = items[:MAX_CLUSTER_ITEMS]
+            payload = [{"id": e["id"], "source": e["source"], "text": e["text"][:500]} for e in batch]
             data = _ask(CLUSTER_SYSTEM, json.dumps(payload))
-            clusters = _validate_clusters(data, {e["id"] for e in items})
+            clusters = _validate_clusters(data, {e["id"] for e in batch})   # only what was sent, or the rest would land in "Other feedback"
             if clusters:
                 return clusters, "claude"
         except Exception as exc:  # fall through to offline mode

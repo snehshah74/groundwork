@@ -3,9 +3,11 @@ and a provider can be added by writing one class and registering it here."""
 from __future__ import annotations
 
 from .base import Integration, Meta
+from .jira import Jira
 from .linear import Linear
+from .trello import Trello
 
-REGISTRY: dict[str, type[Integration]] = {"linear": Linear}
+REGISTRY: dict[str, type[Integration]] = {"linear": Linear, "jira": Jira, "trello": Trello}
 
 
 def _soon(id: str, name: str, kind: str, description: str) -> Meta:
@@ -14,8 +16,6 @@ def _soon(id: str, name: str, kind: str, description: str) -> Meta:
 
 COMING_SOON: list[Meta] = [
     # work trackers
-    _soon("jira", "Jira", "tracker", "Create epics and stories in Jira and sync status back."),
-    _soon("trello", "Trello", "tracker", "Create cards with checklists for each story and follow list moves."),
     _soon("asana", "Asana", "tracker", "Create tasks and subtasks and sync completion."),
     _soon("github", "GitHub Issues", "tracker", "Open issues per story and close the loop when they ship."),
     # customer discovery

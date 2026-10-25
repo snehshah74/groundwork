@@ -182,7 +182,7 @@ Object.assign(G.actions, {
   },
   analyze: t => busy(t, 'Analyzing...', async () => {
     const r = await api('/analyze', { method: 'POST', body: { reanalyze: false } });
-    toast(`${plural(r.problems_created, 'problem')} found`); go('#/problems');
+    toast(`${plural(r.problems_created, 'problem')} found` + (r.remaining ? `. ${plural(r.remaining, 'item')} left: group again to continue` : '')); go('#/problems');
   }),
   regroup: t => busy(t, 'Regrouping...', async () => {
     if (!confirm('Regroup evidence into new problems? Problems that have initiatives are kept. Others are rebuilt and lose their theme.')) return;

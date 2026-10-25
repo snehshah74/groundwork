@@ -73,6 +73,11 @@ CREATE TABLE IF NOT EXISTS webhook_routes (
 );
 """
 
+# Append-only, like core.MIGRATIONS.
+SHARED_MIGRATIONS: list[tuple[int, str, str]] = [
+    (1, "baseline", SHARED_SCHEMA),
+]
+
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _SCRYPT = (2**14, 8, 1)
 _shared_ready = False
@@ -90,17 +95,18 @@ def _iso(d: datetime) -> str:
     return d.isoformat(timespec="seconds")
 
 
-def init_shared() -> None:
+def init_shared() -> int:
     global _shared_ready
     if _shared_ready:
-        return
-    with db.conn("public") as c:   # the schema does not exist yet, so start from a schema that does
-        c.execute("SELECT pg_advisory_xact_lock(4242)")  # two workers starting at once must not race on DDL
+        return db.schema_version(db.SHARED)
+    with db.conn("public") as c:   # the schema does not exist yet, so start from one that does
+        c.execute("SELECT pg_advisory_xact_lock(4242)")  # two workers starting at once must not race on CREATE SCHEMA
         c.execute(f"CREATE SCHEMA IF NOT EXISTS {db.SHARED}")
-        c.execute(f"SET LOCAL search_path TO {db.SHARED}")
-        c.execute(SHARED_SCHEMA)
+    version = db.migrate(db.SHARED, SHARED_MIGRATIONS)
+    with db.conn(db.SHARED) as c:
         db.lock_down(c, db.SHARED)
     _shared_ready = True
+    return version
 
 
 # ---------------------------------------------------------------- passwords (local dev login)

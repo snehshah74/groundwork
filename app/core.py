@@ -114,19 +114,25 @@ CREATE TABLE IF NOT EXISTS sync_log (
 );
 """
 
+# Append-only. Never edit a released migration: add a new (version, description, sql) instead.
+MIGRATIONS: list[tuple[int, str, str]] = [
+    (1, "baseline", SCHEMA),
+]
+
 _ready: set[str] = set()
 
 
-def init_workspace(schema: str) -> None:
-    """Create the schema and tables for one workspace (idempotent), once per process."""
+def init_workspace(schema: str) -> int:
+    """Create the schema if needed and bring it up to the latest migration. Once per process per schema."""
     if schema in _ready:
-        return
+        return db.schema_version(schema)
     with db.conn(db.SHARED) as c:  # CREATE SCHEMA is not tied to any workspace
         c.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+    version = db.migrate(schema, MIGRATIONS)
     with db.conn(schema) as c:
-        c.execute(SCHEMA)
         db.lock_down(c, schema)
     _ready.add(schema)
+    return version
 
 
 def drop_workspace(schema: str) -> None:
@@ -450,7 +456,8 @@ def record_outcome(iid: int, verdict: str, metric_value: str = "", note: str = "
             "INSERT INTO outcomes(initiative_id, verdict, metric_value, note, created_at) VALUES (?,?,?,?,?)",
             (iid, verdict, metric_value, note, now()),
         )
-        c.execute("UPDATE initiatives SET status='measured' WHERE id=?", (iid,))
+        if verdict != "too_early":   # "too early to tell" is a note, not a measurement
+            c.execute("UPDATE initiatives SET status='measured' WHERE id=?", (iid,))
     return get_initiative(iid)
 
 
@@ -515,7 +522,7 @@ def get_stats() -> dict:
         "stories": n("SELECT COUNT(*) AS n FROM stories"),
         "dispatched": n("SELECT COUNT(DISTINCT initiative_id) AS n FROM dispatches"),
         "shipped": n("SELECT COUNT(*) AS n FROM initiatives WHERE status IN ('shipped','measured')"),
-        "measured": n("SELECT COUNT(DISTINCT initiative_id) AS n FROM outcomes"),
+        "measured": n("SELECT COUNT(DISTINCT initiative_id) AS n FROM outcomes WHERE verdict <> 'too_early'"),
         "worked": n("SELECT COUNT(DISTINCT initiative_id) AS n FROM outcomes WHERE verdict='worked'"),
     }
 
@@ -587,7 +594,7 @@ def compute_insights() -> list[dict]:
             f"Break \"{nostories[0]['title']}\" into a story map so agents can build it in steps.",
             "Open initiative", "initiative", {"initiative_id": nostories[0]["id"], "tab": "stories"})
 
-    unmeasured = [i for i in inits if i["status"] == "shipped" and not i["latest_verdict"]]
+    unmeasured = [i for i in inits if i["status"] == "shipped" and i["latest_verdict"] in (None, "too_early")]
     if unmeasured:
         add("attention", f"\"{unmeasured[0]['title']}\" shipped but was never measured",
             f"Success metric: {unmeasured[0]['success_metric'] or 'not set'}. Record whether it moved.",

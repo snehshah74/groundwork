@@ -86,6 +86,34 @@ def lock_down(c, schema: str) -> None:
     )
 
 
+def migrate(schema: str, migrations: list[tuple[int, str, str]]) -> int:
+    """Apply pending (version, description, sql) migrations to one schema, all in one transaction.
+
+    A schema created before versioning existed has no schema_version row, so it counts as version 0 and the
+    baseline migration (written with IF NOT EXISTS) adopts it. A failure rolls everything back and re-raises.
+    Returns the version the schema is now at.
+    """
+    with conn(schema) as c:
+        c.execute("SELECT pg_advisory_xact_lock(hashtext(?))", (schema,))   # two workers must not migrate one schema at once
+        c.execute(f"CREATE TABLE IF NOT EXISTS {schema}.schema_version (id INTEGER PRIMARY KEY CHECK (id = 1), version INTEGER NOT NULL)")
+        row = c.execute(f"SELECT version FROM {schema}.schema_version").fetchone()
+        current = row["version"] if row else 0
+        for version, _description, sql in sorted(migrations):
+            if version > current:
+                c.execute(sql)
+                current = version
+        c.execute(f"INSERT INTO {schema}.schema_version(id, version) VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET version = EXCLUDED.version", (current,))
+    return current
+
+
+def schema_version(schema: str) -> int:
+    """Current migration version of a schema; 0 when it has none yet (never migrated, or created before versioning)."""
+    if not one("SELECT to_regclass(?) AS t", (f"{schema}.schema_version",))["t"]:
+        return 0
+    row = one(f"SELECT version FROM {schema}.schema_version")
+    return row["version"] if row else 0
+
+
 def rows(sql: str, args: tuple = ()) -> list[dict]:
     with conn() as c:
         return c.execute(sql, args).fetchall()

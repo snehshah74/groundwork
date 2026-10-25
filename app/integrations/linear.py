@@ -46,7 +46,8 @@ _ISSUE = "id identifier url title state { name type }"
 
 class Linear(Integration):
     meta = Meta(
-        id="linear", name="Linear", kind="tracker", status="ready", auth="api_key",
+        id="linear", name="Linear", kind="tracker", status="ready", auth="api_key", target_label="team", webhooks=True,
+        webhook_help="In Linear, open Settings > API > Webhooks and create a webhook for Issues.",
         description="Send initiatives to Linear as issues with their stories as sub-issues, and keep status in sync.",
         fields=[Field("api_key", "Personal API key", secret=True, help="Linear > Settings > Account > Security & access > Personal API keys")],
     )
@@ -60,12 +61,12 @@ class Linear(Integration):
         teams = data["teams"]["nodes"]
         if not teams:
             raise IntegrationError("That Linear account has no teams to send work to.")
-        cfg = {"viewer": data["viewer"]["name"] or data["viewer"]["email"], "teams": teams, "team_id": teams[0]["id"] if len(teams) == 1 else ""}
+        cfg = {"viewer": data["viewer"]["name"] or data["viewer"]["email"], "targets": teams, "target_id": teams[0]["id"] if len(teams) == 1 else ""}
         return cfg, secret
 
     # ---------------------------------------------------------------- push
     def push_initiative(self, cfg, secret, initiative, stories, links):
-        team = cfg.get("team_id")
+        team = cfg.get("target_id")
         if not team:
             raise IntegrationError("Choose which Linear team should receive this work.")
         problem = initiative.get("problem") or {}
@@ -118,3 +119,10 @@ class Linear(Integration):
         if ts and abs(time.time() * 1000 - float(ts)) > 5 * 60 * 1000:   # replayed or badly delayed delivery
             raise IntegrationError("Webhook is too old.")
         return event
+
+    def parse_event(self, event):
+        data = event.get("data") or {}
+        if event.get("type") != "Issue" or not data.get("id") or not data.get("state"):
+            return None
+        return {"external_id": data["id"], "state_type": data["state"].get("type", ""), "state_name": data["state"].get("name", ""),
+                "url": event.get("url", ""), "key": data.get("identifier", "")}

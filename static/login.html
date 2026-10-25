@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Log in | Groundwork</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23074ce0'/%3E%3Cpath d='M9 24l5-16h3l-5 16zM15 24l5-16h3l-5 16z' fill='white'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Host+Grotesk:wght@500;600;700&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/site.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs><symbol id="mark" viewBox="0 0 32 32"><path d="M3 29L11 3h5L8 29zM12 29L20 3h5l-8 26zM21 29L29 3h3l-8 26z" fill="currentColor"/></symbol></defs></svg>
+<div class="auth">
+  <aside class="auth-side on-field">
+    <a class="logo" href="/"><svg style="color:#6f98ff" aria-hidden="true"><use href="#mark"/></svg>Groundwork</a>
+    <div>
+      <h2>Build from what customers actually said</h2>
+      <ol>
+        <li><b>1</b><span>Add customer evidence and let it group into problems.</span></li>
+        <li><b>2</b><span>Turn the important problems into specs and story maps.</span></li>
+        <li><b>3</b><span>Hand them to your coding agent, then record whether it worked.</span></li>
+      </ol>
+    </div>
+    <small>An evidence-to-code workspace for product teams.</small>
+  </aside>
+  <main class="auth-main" id="main">
+    <div class="auth-card">
+      <a class="logo logo-m" href="/"><svg style="color:var(--dp-color-accent)" aria-hidden="true"><use href="#mark"/></svg>Groundwork</a>
+      <h1>Welcome back</h1>
+      <p class="sub">Log in to your workspace.</p>
+      <form id="auth-form" data-mode="login" novalidate>
+        <div class="form-error" id="form-error" role="alert"></div>
+        <div class="field"><label for="email">Email</label><input class="input" id="email" name="email" type="email" autocomplete="email" required autofocus></div>
+        <div class="field"><label for="password">Password</label>
+          <div class="pw"><input class="input" id="password" name="password" type="password" autocomplete="current-password" required><button type="button" id="pw-toggle" aria-pressed="false" aria-controls="password">Show</button></div></div>
+        <button class="btn primary block" type="submit" id="submit">Log in</button>
+      </form>
+      <p class="alt">New to Groundwork? <a href="/signup">Create an account</a></p>
+    </div>
+  </main>
+</div>
+<script src="/static/auth.js"></script>
+</body>
+</html>

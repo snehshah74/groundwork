@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Groundwork: from customer evidence to shipped work</title>
+<meta name="description" content="Groundwork groups customer feedback into problems, turns them into specs and story maps, hands them to your coding agent, and checks whether the work moved the metric.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23074ce0'/%3E%3Cpath d='M9 24l5-16h3l-5 16zM15 24l5-16h3l-5 16z' fill='white'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Host+Grotesk:wght@500;600;700&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="mark" viewBox="0 0 32 32"><path d="M3 29L11 3h5L8 29zM12 29L20 3h5l-8 26zM21 29L29 3h3l-8 26z" fill="currentColor"/></symbol>
+  </defs>
+</svg>
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="logo" href="/" aria-label="Groundwork home"><svg style="color:var(--dp-color-accent)" aria-hidden="true"><use href="#mark"/></svg>Groundwork</a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#pricing">Pricing</a>
+      <a href="#faq">FAQ</a>
+      <span class="nav-cta" id="nav-cta">
+        <a class="btn sm" href="/login">Log in</a>
+        <a class="btn sm primary" href="/signup">Start free</a>
+      </span>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="wrap">
+      <div>
+        <h1 id="hero-title">Turn customer evidence into <em>shipped work</em></h1>
+        <p class="lede">Groundwork groups feedback into problems, turns the important ones into specs and story maps, hands them to your coding agent, and checks whether the work moved the metric.</p>
+        <div class="actions">
+          <a class="btn primary" href="/signup">Start free <svg aria-hidden="true"><use href="#i-arrow"/></svg></a>
+          <a class="btn" href="#how">See how it works <svg aria-hidden="true"><use href="#i-down"/></svg></a>
+        </div>
+      </div>
+      <div class="diagram-wrap">
+        <svg class="diagram" viewBox="0 0 560 560" role="img" aria-label="Interviews, support tickets and reviews flow into Groundwork, which produces specs for your coding agent.">
+          <defs>
+            <linearGradient id="g-blue" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#2f6cf0"/><stop offset="1" stop-color="#0540c4"/></linearGradient>
+            <filter id="g-shadow" x="-30%" y="-30%" width="160%" height="170%"><feDropShadow dx="0" dy="14" stdDeviation="12" flood-color="#16191f" flood-opacity=".14"/></filter>
+            <filter id="g-shadow-blue" x="-40%" y="-40%" width="180%" height="190%"><feDropShadow dx="0" dy="16" stdDeviation="12" flood-color="#074ce0" flood-opacity=".38"/></filter>
+          </defs>
+          <circle cx="285" cy="290" r="200" fill="#f3f4f6" stroke="#e6e8ed"/>
+          <circle cx="285" cy="290" r="140" fill="none" stroke="#dde0e6" stroke-dasharray="2 5"/>
+          <g fill="none" stroke="#9aa2af" stroke-width="1.5" stroke-dasharray="5 5">
+            <path d="M200 175 H285 V245"/>
+            <path d="M420 215 V290 H342"/>
+            <path d="M285 342 V450 H350"/>
+          </g>
+          <g filter="url(#g-shadow)">
+            <g transform="rotate(-6 130 150)">
+              <rect x="28" y="80" width="214" height="140" rx="14" fill="#fff" stroke="#e3e6eb"/>
+              <g fill="none" stroke="#16191f" stroke-width="1.6" stroke-linecap="round"><circle cx="62" cy="116" r="7"/><path d="M48 138c0-8 6-13 14-13s14 5 14 13"/><circle cx="76" cy="111" r="5" opacity=".5"/></g>
+              <text x="96" y="122" font-size="15" font-weight="600" fill="#16191f" style="font-family:var(--display)">Interviews</text>
+              <rect x="96" y="132" width="110" height="6" rx="3" fill="#e6e8ed"/>
+              <circle cx="58" cy="184" r="10" fill="#c3c9d3"/><circle cx="76" cy="184" r="10" fill="#dde0e6"/><circle cx="94" cy="184" r="10" fill="#5f6774"/>
+            </g>
+            <g transform="rotate(4 420 170)">
+              <rect x="326" y="118" width="200" height="118" rx="14" fill="#fff" stroke="#e3e6eb"/>
+              <path d="M360 150l-12 20h10l-3 16 14-22h-10z" fill="none" stroke="#16191f" stroke-width="1.6" stroke-linejoin="round"/>
+              <text x="384" y="158" font-size="15" font-weight="600" fill="#16191f" style="font-family:var(--display)">Support tickets</text>
+              <rect x="384" y="170" width="86" height="6" rx="3" fill="#e6e8ed"/><rect x="384" y="184" width="56" height="6" rx="3" fill="#e6e8ed"/>
+              <path d="M488 208l6 6 12-14" fill="none" stroke="#074ce0" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+            </g>
+            <g transform="rotate(-4 400 480)">
+              <rect x="300" y="408" width="216" height="130" rx="14" fill="#fff" stroke="#e3e6eb"/>
+              <text x="324" y="440" font-size="15" font-weight="600" fill="#16191f" style="font-family:var(--display)">Reviews</text>
+              <g><rect x="326" y="496" width="22" height="16" rx="2" fill="#e6e8ed"/><rect x="356" y="488" width="22" height="24" rx="2" fill="#dde0e6"/><rect x="386" y="494" width="22" height="18" rx="2" fill="#dde0e6"/><rect x="416" y="476" width="22" height="36" rx="2" fill="#c3c9d3"/><rect x="446" y="456" width="22" height="56" rx="2" fill="#074ce0"/></g>
+            </g>
+          </g>
+          <g filter="url(#g-shadow-blue)">
+            <rect x="233" y="238" width="104" height="104" rx="26" fill="url(#g-blue)"/>
+            <rect x="233.5" y="238.5" width="103" height="103" rx="25.5" fill="none" stroke="#fff" stroke-opacity=".25"/>
+          </g>
+          <svg x="256" y="261" width="58" height="58" viewBox="0 0 32 32" style="color:#fff" aria-hidden="true"><use href="#mark"/></svg>
+          <circle cx="180" cy="420" r="4.5" fill="#074ce0"/>
+        </svg>
+      </div>
+    </div>
+  </section>
+
+  <section class="facts" aria-label="At a glance">
+    <div class="wrap">
+      <ul>
+        <li><b>6</b><strong>Steps in one chain</strong><span>Evidence to measured outcome</span></li>
+        <li><b>1 click</b><strong>Brief for any agent</strong><span>Copy it, or serve it over MCP</span></li>
+        <li><b>6</b><strong>MCP tools</strong><span>Claude Code, Cursor and others</span></li>
+        <li><b>CSV</b><strong>Ticket export</strong><span>An epic plus its stories</span></li>
+      </ul>
+    </div>
+  </section>
+
+  <section class="intro" aria-labelledby="intro-title">
+    <div class="wrap">
+      <h2 class="h2" id="intro-title">Stop guessing what to build. Trace every build back to what customers said.</h2>
+      <div class="copy">
+        <p>Most teams keep feedback in one place, plans in another, and code in a third. By the time something ships, nobody can say which customer it was for or whether it worked.</p>
+        <p>Groundwork keeps the whole chain in one workspace. Each initiative links to its problem, its theme and its quotes, so your coding agent builds from the real situation, and you find out afterwards whether the metric moved.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="block muted-field features" id="features" aria-labelledby="feat-title">
+    <div class="wrap">
+      <div class="head"><h2 class="h2" id="feat-title">Everything between a customer quote and a shipped change</h2></div>
+      <div class="grid3">
+        <article class="feature">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 13l2.5-7.5A2 2 0 017.4 4h9.2a2 2 0 011.9 1.5L21 13v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5z"/><path d="M3 13h5l1 2h6l1-2h5"/></svg></div>
+          <h3>Evidence inbox</h3>
+          <p>Paste interviews, tickets and reviews, or upload a CSV. Every item keeps its source so you can see how well a claim is backed.</p>
+        </article>
+        <article class="feature">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><circle cx="5" cy="6" r="2"/><circle cx="19" cy="7" r="2"/><circle cx="12" cy="20" r="2"/><path d="M7 7l3 3M17 8.5l-3.2 2.4M12 15v3"/></svg></div>
+          <h3>Problem map</h3>
+          <p>Feedback is grouped by what the customer is struggling with, not by feature request. Circles are sized by the evidence behind them.</p>
+        </article>
+        <article class="feature">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="5" height="16" rx="1"/><rect x="10" y="4" width="5" height="10" rx="1"/><rect x="17" y="4" width="4" height="13" rx="1"/></svg></div>
+          <h3>Strategy themes</h3>
+          <p>Drag problems into the directions you are willing to commit to, so every initiative is tied to where the product is going.</p>
+        </article>
+        <article class="feature">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v5h5M9 13h7M9 17h5"/></svg></div>
+          <h3>Specs and story maps</h3>
+          <p>Get who it is for, a measurable success metric, acceptance criteria and scope limits, then break it into stories along the user's journey.</p>
+        </article>
+        <article class="feature">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 10l3 2-3 2M12 15h5"/></svg></div>
+          <h3>Agent hand-off</h3>
+          <p>Your coding agent reads the brief over MCP, builds it story by story, and reports the outcome back into Groundwork.</p>
+        </article>
+        <article class="feature">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 20h18M5 16l4-5 4 3 6-8"/></svg></div>
+          <h3>Outcome tracing</h3>
+          <p>Record whether the metric moved. The trace view shows each initiative from measured result down to the customer quotes.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <div class="on-field">
+    <section class="block process" id="how" aria-labelledby="how-title">
+      <div class="wrap">
+        <div class="head">
+          <h2 class="h2" id="how-title">How Groundwork works</h2>
+          <p>From a pile of feedback to a measured result.</p>
+        </div>
+        <ol class="steps">
+          <li><div class="num"><span>01</span><i></i></div><h3>Add evidence</h3><p>Paste it in as it arrives or upload a file. Groundwork groups it into customer problems.</p></li>
+          <li><div class="num"><span>02</span><i></i></div><h3>Shape the work</h3><p>Sort problems into themes, then turn the ones that matter into initiatives with a spec and a story map.</p></li>
+          <li><div class="num"><span>03</span><i></i></div><h3>Hand off and measure</h3><p>Send the brief to your agent, then record whether the success metric moved.</p></li>
+        </ol>
+
+        <div class="why">
+          <h2 class="h2">Why teams use Groundwork</h2>
+          <ul>
+            <li><svg aria-hidden="true"><use href="#i-check"/></svg><h3>Every spec has receipts</h3><p>Each initiative links back to the exact quotes that justify it.</p></li>
+            <li><svg aria-hidden="true"><use href="#i-check"/></svg><h3>Agents get a real brief</h3><p>Problem, evidence, acceptance criteria, stories and out-of-scope, in one document.</p></li>
+            <li><svg aria-hidden="true"><use href="#i-check"/></svg><h3>Gaps surface themselves</h3><p>Home flags thin evidence, unmeasured launches and problems nobody is working on.</p></li>
+            <li><svg aria-hidden="true"><use href="#i-check"/></svg><h3>Ask Velo anything</h3><p>A built-in assistant answers questions about your workspace and cites the evidence.</p></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <section class="block muted-field pricing" id="pricing" aria-labelledby="price-title">
+    <div class="wrap">
+      <div class="head">
+        <h2 class="h2" id="price-title">Simple, transparent pricing</h2>
+        <p>Start free. Paid plans arrive as shared workspaces and integrations ship.</p>
+      </div>
+      <div class="plans">
+        <article class="plan">
+          <div class="top"><h3>Starter</h3></div>
+          <p class="for">For one person validating what to build next.</p>
+          <div class="price">$0 <small>USD / month</small></div>
+          <a class="btn" href="/signup">Start free <svg aria-hidden="true"><use href="#i-arrow"/></svg></a>
+          <ul>
+            <li><svg aria-hidden="true"><use href="#i-check"/></svg>Your own private workspace</li>
+            <li><svg aria-hidden="true"><use href="#i-check"/></svg>Evidence, problems, themes, initiatives</li>
+            <li><svg aria-hidden="true"><use href="#i-check"/></svg>Story maps and ticket CSV export</li>
+            <li><svg aria-hidden="true"><use href="#i-check"/></svg>Agent hand-off over MCP</li>
+            <li><svg aria-hidden="true"><use href="#i-check"/></svg>Ask Velo</li>
+          </ul>
+        </article>
+        <article class="plan featured">
+          <div class="top"><h3>Team</h3><span class="badge">Coming soon</span></div>
+          <p class="for">For product teams working from the same evidence.</p>
+          <div class="price">$29 <small>USD / seat / month</small></div>
+          <a class="btn primary" href="/signup">Start on Starter <svg aria-hidden="true"><use href="#i-arrow"/></svg></a>
+          <ul>
+            <li><svg aria-hidden="true"><use href="#i-check"/></svg>Everything in Starter</li>
+            <li><svg aria-hidden="true"><use href="#i-check"/></svg>Shared workspaces</li>
+            <li><svg aria-hidden="true"><use href="#i-check"/></svg>Jira and Linear sync</li>
+            <li><svg aria-hidden="true"><use href="#i-check"/></svg>Gmail and Intercom importers</li>
+          </ul>
+        </article>
+        <article class="plan">
+          <div class="top"><h3>Enterprise</h3></div>
+          <p class="for">For organizations with security and rollout needs.</p>
+          <div class="price" style="font-size:40px">Custom</div>
+          <a class="btn" href="/signup">Start on Starter <svg aria-hidden="true"><use href="#i-arrow"/></svg></a>
+          <ul>
+            <li><svg aria-hidden="true"><use href="#i-check"/></svg>Everything in Team</li>
+            <li><svg aria-hidden="true"><use href="#i-check"/></svg>Single sign-on</li>
+            <li><svg aria-hidden="true"><use href="#i-check"/></svg>Audit trail</li>
+            <li><svg aria-hidden="true"><use href="#i-check"/></svg>Dedicated support</li>
+          </ul>
+        </article>
+      </div>
+      <p class="note">Team and Enterprise are on the roadmap. Prices are indicative until billing is available.</p>
+    </div>
+  </section>
+
+  <section class="block muted-field faq" id="faq" aria-labelledby="faq-title">
+    <div class="wrap">
+      <h2 class="h2" id="faq-title">Questions, answered</h2>
+      <div>
+        <details><summary>Do I need an Anthropic API key?</summary><p>No. Without a key Groundwork still runs: it groups evidence with a simple text-similarity method and writes template specs. With a key, Claude does the grouping, specs, canvas, themes, stories and Ask Velo, and results are much sharper.</p></details>
+        <details><summary>Which coding agents does it work with?</summary><p>Any client that speaks MCP, including Claude Code and Cursor. If your tool does not, copy the brief from the Hand off tab and paste it in.</p></details>
+        <details><summary>Is my data separate from other accounts?</summary><p>Yes. Every account gets its own workspace database. Evidence is only sent to Claude when AI is switched on for the installation.</p></details>
+        <details><summary>Can I get work into Jira or Linear?</summary><p>Not directly yet. Export an initiative as a CSV with an epic and its stories, and map it with the importer your tracker provides. Native sync is on the roadmap.</p></details>
+        <details><summary>How do I try it without my own data?</summary><p>Sign up and choose "Load a demo workspace". It fills in a fictional invoicing product so you can walk the whole chain in a few minutes.</p></details>
+      </div>
+    </div>
+  </section>
+
+  <div class="on-field">
+    <section class="closing" aria-labelledby="close-title">
+      <div class="wrap">
+        <h2 class="h2" id="close-title">Build the next thing on solid ground</h2>
+        <p class="secondary">Create a workspace, load the demo or your own evidence, and follow one problem all the way to an outcome.</p>
+        <div class="actions">
+          <a class="btn primary" href="/signup">Start free <svg aria-hidden="true"><use href="#i-arrow"/></svg></a>
+          <a class="btn" href="/login">Log in</a>
+        </div>
+      </div>
+    </section>
+    <footer class="site-foot">
+      <div class="wrap">
+        <div><a class="logo" href="/"><svg style="color:#6f98ff" aria-hidden="true"><use href="#mark"/></svg>Groundwork</a><p>An evidence-to-code workspace for product teams.</p></div>
+        <div><h4>Product</h4><ul><li><a href="#features">Features</a></li><li><a href="#how">How it works</a></li><li><a href="#pricing">Pricing</a></li></ul></div>
+        <div><h4>Help</h4><ul><li><a href="#faq">FAQ</a></li></ul></div>
+        <div><h4>Account</h4><ul><li><a href="/login">Log in</a></li><li><a href="/signup">Sign up</a></li></ul></div>
+      </div>
+    </footer>
+  </div>
+</main>
+<script src="/static/site.js"></script>
+</body>
+</html>

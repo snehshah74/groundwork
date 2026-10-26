@@ -286,7 +286,7 @@ G.views.initiative = async r => {
   } else if (tab === 'trace') {
     body = `<p class="sub" style="max-width:62ch;margin-top:0">Read from the bottom up: what customers said, the problem it revealed, the theme it serves, the initiative, the stories, the hand-off, and the measured result. Hatched layers are missing.</p>${traceHTML(i)}`;
   } else if (tab === 'handoff') {
-    const [ctx, integs, links] = await Promise.all([api(`/initiatives/${i.id}/context`), api('/integrations'), api(`/initiatives/${i.id}/links`)]);
+    const [ctx, integs, links, activity] = await Promise.all([api(`/initiatives/${i.id}/context`), api('/integrations'), api(`/initiatives/${i.id}/links`), api(`/initiatives/${i.id}/activity`)]);
     const prompt = `Implement Groundwork initiative ${i.id}. Call get_product_context, then get_initiative_context with initiative_id ${i.id}, build it story by story, and call report_outcome when it ships.`;
     const mcpCmd = `claude mcp add groundwork -e GROUNDWORK_TOKEN=${G.me.api_token} -- ${'${PWD}'}/.venv/bin/python ${'${PWD}'}/mcp_server.py`;
     G.cur.ctx = ctx; G.cur.prompt = prompt;
@@ -305,7 +305,7 @@ G.views.initiative = async r => {
         <div class="panel"><h2>No agent connected? Paste the brief</h2><p class="sub small">Works in any tool. Copying counts as a hand-off.</p>
           <div class="actions"><button class="btn primary" data-act="copy-brief" data-id="${i.id}">Copy brief</button><a class="btn" href="/api/initiatives/${i.id}/tickets.csv" download>Export tickets (CSV)</a></div></div></div>
       <div><h2 class="section-title">What the agent receives</h2><pre class="brief">${esc(ctx)}</pre>
-        ${i.dispatches.length ? `<h2 class="section-title" style="margin-top:22px">Deliveries</h2>${i.dispatches.map(d => `<p class="small" style="margin:4px 0">${esc(d.target)} <span class="muted">${ago(d.created_at)}</span></p>`).join('')}` : ''}</div></div>`;
+        ${activity.length ? `<h2 class="section-title" style="margin-top:22px">Activity</h2>${activity.slice(0, 20).map(a => `<p class="small" style="margin:4px 0"><b>${esc(a.who)}</b> ${esc(a.text)} <span class="muted">${ago(a.at)}</span></p>`).join('')}` : ''}</div></div>`;
   } else {
     body = `<div class="spec-grid"><div class="panel stack"><h2>Did it work?</h2>
         <p class="sub small" style="margin:0">Target: ${esc(i.success_metric || 'no metric set')}</p>
@@ -334,7 +334,7 @@ Object.assign(G.actions, {
   'gen-stories': t => busy(t, 'Building...', async () => {
     if (G.cur.stories.length && !confirm('Replace the current stories with a new draft?')) return;
     const r = await api(`/initiatives/${t.dataset.id}/stories/generate`, { method: 'POST' });
-    toast(r.mode === 'claude' ? `${plural(r.stories.length, 'story', 'stories')} drafted` : 'Basic story map drafted. Turn on AI for a fuller one.'); render();
+    toast(r.mode === 'claude' ? `${plural(r.stories.length, 'story', 'stories')} drafted` : basicNote('story map')); render();
   }),
   'add-story': t => modal({
     title: 'Add story', submit: 'Add story',

@@ -49,6 +49,7 @@ function ago(iso) {
   return `${Math.floor(s / 86400)} d ago`;
 }
 function go(hash) { if (location.hash === hash) render(); else location.hash = hash; }
+const basicNote = (what) => G.status && G.status.ai_mode === 'limited' ? `AI credits are used up this month, so this ${what} is basic.` : `Basic ${what} drafted. Turn on AI for a fuller one.`;
 const lines = t => String(t || '').split('\n').map(x => x.trim()).filter(Boolean);
 
 /* ---------- modal ---------- */
@@ -80,7 +81,7 @@ function parseHash() {
   const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
   return { view: parts[0] || 'home', id: parts[1] ? +parts[1] : null, tab: parts[2] || null };
 }
-const NAV_OF = { home: 'home', canvas: 'canvas', integrations: 'integrations', team: 'team', priorities: 'priorities', evidence: 'evidence', problems: 'problems', strategy: 'strategy', initiatives: 'initiatives', initiative: 'initiatives' };
+const NAV_OF = { home: 'home', canvas: 'canvas', integrations: 'integrations', team: 'team', priorities: 'priorities', governance: 'governance', evidence: 'evidence', problems: 'problems', strategy: 'strategy', initiatives: 'initiatives', initiative: 'initiatives' };
 
 async function refreshRail() {
   const s = await api('/status');
@@ -98,8 +99,8 @@ async function refreshRail() {
   $('#n-problems').textContent = s.problems || '';
   $('#n-themes').textContent = s.themes || '';
   $('#n-initiatives').textContent = s.initiatives || '';
-  $('#ai-state').innerHTML = s.ai_mode === 'claude'
-    ? `AI is on: <b>Claude</b>`
+  $('#ai-state').innerHTML = s.ai_mode === 'claude' ? `AI is on: <b>Claude</b>`
+    : s.ai_mode === 'limited' ? `AI credits are <b>used up</b> for this month, so drafts are basic until they reset.`
     : `AI is off. Set <b>ANTHROPIC_API_KEY</b> and restart for full-quality results.`;
   return s;
 }
@@ -209,6 +210,10 @@ const actHref = a => a.kind === 'problem' ? `#/problems/${a.ref_id}` : `#/initia
 
 G.views.home = async () => {
   const d = await api('/home'); const s = d.stats; const p = d.product;
+  if (!G.wizChecked && ['owner', 'admin'].includes(G.me.workspace.role) && s.evidence === 0 && !p.name) {
+    G.wizChecked = true;   // offered once per page load, so "Skip setup" and the back button never trap anyone
+    if (!(await api('/settings')).onboarded) { go('#/welcome'); return ''; }
+  }
   const head = `<header class="page-head"><div>
       <h1>${esc(p.name || 'Welcome to Groundwork')}</h1>
       <p>${esc(p.overview || 'Trace every build back to what customers told you, and check whether it worked.')}</p></div>
@@ -252,7 +257,8 @@ G.views.canvas = async () => {
     <p>One page on what you are building and for whom. Velo reads this to keep specs on strategy.</p></div></header>
     <div class="canvas-intro">
       <label class="field"><span>Product name</span><input type="text" data-change="product-name" value="${esc(p.name)}" placeholder="Ledgerly"></label>
-      <button class="btn primary" data-act="gen-canvas">${p.updated_at && Object.values(p.canvas).some(v => v) ? 'Rewrite canvas' : 'Draft canvas'}</button>
+      <div class="actions"><label class="btn" style="cursor:pointer" title="Read a brief, strategy doc or pitch and draft the canvas from it">Build from a document<input type="file" accept=".pdf,.docx,.md,.txt" hidden data-change="canvas-doc"></label>
+        <button class="btn primary" data-act="gen-canvas">${p.updated_at && Object.values(p.canvas).some(v => v) ? 'Rewrite canvas' : 'Draft canvas'}</button></div>
       <label class="field wide"><span>What it does, in a few sentences</span><textarea rows="2" style="min-height:64px" data-change="product-overview" placeholder="Describe the product, who it is for, and the main problem it solves.">${esc(p.overview)}</textarea></label>
     </div>
     <div class="lean">${BLOCKS.map(b => `<div class="blk ${b[2]}"><h3>${b[1]}</h3>
@@ -261,12 +267,19 @@ G.views.canvas = async () => {
 G.changes['product-name'] = async t => { await api('/product', { method: 'PUT', body: { name: t.value } }); toast('Saved'); refreshRail(); };
 G.changes['product-overview'] = async t => { await api('/product', { method: 'PUT', body: { overview: t.value } }); toast('Saved'); };
 G.changes.canvas = async t => { await api('/product', { method: 'PUT', body: { canvas: { [t.dataset.key]: t.value } } }); toast('Saved'); };
+G.changes['canvas-doc'] = async t => {
+  const f = t.files[0]; if (!f) return;
+  if (Object.values((await api('/product')).canvas).some(v => v.trim()) && !confirm('Replace the current canvas with one drafted from this document?')) { t.value = ''; return; }
+  const fd = new FormData(); fd.append('file', f); t.value = '';
+  toast('Reading the document...');
+  try { const r = await api('/product/from-doc', { method: 'POST', body: fd }); toast(r.mode === 'claude' ? 'Canvas drafted from your document' : basicNote('canvas')); render(); } catch (x) { toast(x.message); }
+};
 G.actions['gen-canvas'] = t => busy(t, 'Drafting...', async () => {
   const name = $('[data-change="product-name"]').value, overview = $('[data-change="product-overview"]').value;
   if (!overview.trim()) throw new Error('Describe your product first, in a sentence or two.');
   if (Object.values((await api('/product')).canvas).some(v => v.trim()) && !confirm('Replace the current canvas with a new draft?')) return;
   const r = await api('/product/generate', { method: 'POST', body: { name, overview } });
-  toast(r.mode === 'claude' ? 'Canvas drafted' : 'Basic canvas drafted. Turn on AI for a full one.'); render();
+  toast(r.mode === 'claude' ? 'Canvas drafted' : basicNote('canvas')); render();
 });
 
 /* ---------- evidence ---------- */
@@ -281,13 +294,13 @@ G.views.evidence = async () => {
   return `<header class="page-head"><div><h1>Evidence</h1>
       <p>What customers actually said. Paste it in as it comes: interviews, tickets, reviews, survey answers.</p></div>
       <div class="actions"><button class="btn" data-act="toggle-composer">${composerOpen && items.length ? 'Close' : 'Add evidence'}</button>
-        <label class="btn" style="cursor:pointer">Upload CSV or text<input type="file" accept=".csv,.txt,.md" hidden data-change="upload"></label>
+        <label class="btn" style="cursor:pointer">Upload a file<input type="file" accept=".csv,.txt,.md,.pdf,.docx" hidden data-change="upload"></label>
         ${items.length && !ungrouped ? '<button class="btn" data-act="regroup">Regroup all</button>' : ''}</div></header>
     ${composerOpen ? `<div class="panel composer"><textarea id="ev-text" rows="4" placeholder="Paste a quote, a ticket or your notes from a call"></textarea>
       <div class="actions"><select id="ev-src" aria-label="Source"><option>interview</option><option>support</option><option>review</option><option>survey</option><option>note</option></select>
       <button class="btn primary" data-act="add-evidence">Add</button>
       ${items.length ? '' : '<button class="btn" data-act="seed">Load demo evidence instead</button>'}</div>
-      <p class="small muted" style="margin:0">CSV files need a <b>text</b> column and can have a <b>source</b> column. Text files are split on blank lines.</p></div>` : ''}
+      <p class="small muted" style="margin:0">Upload a <b>PDF or Word</b> document and it is read into passages. <b>CSV</b> files need a <b>text</b> column (and can have <b>source</b>). Text and Markdown are split on blank lines, one item each. Up to 10 MB.</p></div>` : ''}
     ${ungrouped ? `<div class="banner"><span><b>${plural(ungrouped, 'item')}</b> not in a problem yet.</span><button class="btn primary small" data-act="analyze">Group into problems</button></div>` : ''}
     ${items.length ? `<div class="filters" role="group" aria-label="Filter evidence">
       <button class="chip" aria-pressed="${G.evFilter === 'all'}" data-act="ev-filter" data-v="all">All ${items.length}</button>
@@ -314,7 +327,11 @@ Object.assign(G.actions, {
 G.changes.upload = async t => {
   const f = t.files[0]; if (!f) return;
   const fd = new FormData(); fd.append('file', f);
-  try { const r = await api('/evidence/upload', { method: 'POST', body: fd }); toast(`Added ${plural(r.added, 'item')}`); render(); } catch (x) { toast(x.message); }
+  t.value = '';   // so the same file can be chosen again
+  try {
+    const r = await api('/evidence/upload', { method: 'POST', body: fd });
+    toast(`Added ${plural(r.added, 'item')}` + (r.skipped ? `, ${r.skipped} already there` : '') + (r.truncated ? '. Large file: only the first part was read' : '')); render();
+  } catch (x) { toast(x.message); }
 };
 
 /* ---------- Ask Velo ---------- */

@@ -359,6 +359,12 @@ pre.brief { background: color-mix(in srgb, var(--ink) 5%, var(--raised)); border
 .scorebar i { display: block; height: 100%; }
 @media (max-width: 760px) { .prio-row { grid-template-columns: 28px minmax(0, 1fr) 48px; } .prio-row .actions { grid-column: 2 / -1; } }
 
+.wizard { max-width: 680px; margin: 24px auto 60px; }
+.wizard h1 { margin: 0 0 8px; font-size: 2rem; letter-spacing: -.04em; }
+.wiz-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.wiz-steps i { height: 5px; border-radius: 3px; background: var(--line); }
+.wiz-steps i.on { background: var(--accent); }
+
 /* ---------- ask velo ---------- */
 .ask { position: fixed; top: 0; right: 0; bottom: 0; width: min(430px, 100vw); background: var(--surface); border-left: 1px solid var(--line); z-index: 40; display: flex; flex-direction: column; transform: translateX(102%); transition: transform .22s ease; box-shadow: var(--shadow); }
 .ask.open { transform: none; }

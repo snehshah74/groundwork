@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from starlette.concurrency import run_in_threadpool
 
-from . import ai, analysis, auth, core, db, teams
+from . import ai, analysis, auth, core, db, ingest, teams, usage
 from .integrations import service as integrations
 from .integrations.base import IntegrationError
 from .seed_data import SEED_EVIDENCE, SEED_PRODUCT
@@ -100,6 +100,7 @@ class InviteIn(BaseModel):
 
 class SettingsPatch(BaseModel):
     auto_analyze: bool | None = None
+    onboarded: bool | None = None
 
 
 class EvidenceMove(BaseModel):
@@ -462,7 +463,8 @@ def accept_invite(body: AcceptIn, request: Request):
 @api.get("/status")
 def status():
     s = core.get_stats()
-    return {"ai_mode": "claude" if ai.ai_enabled() else "offline", "model": ai.MODEL, **s}
+    mode = "offline" if not ai.has_key() else ("claude" if usage.has_credit() else "limited")    # limited: key set, monthly credits spent
+    return {"ai_mode": mode, "model": ai.MODEL, **s}
 
 
 @api.get("/home")
@@ -481,6 +483,23 @@ def get_priorities():
     return core.priorities()
 
 
+@api.get("/governance")
+def get_governance():
+    return core.governance()
+
+
+@api.get("/initiatives/{iid}/activity")
+def initiative_activity(iid: int):
+    if not core.one("SELECT 1 AS x FROM initiatives WHERE id=?", (iid,)):
+        raise HTTPException(404, "Initiative not found")
+    return core.initiative_activity(iid)
+
+
+@api.get("/usage")
+def get_usage():
+    return usage.summary()
+
+
 @api.get("/settings")
 def get_settings():
     return {"auto_analyze": analysis.enabled(), "onboarded": core.get_setting("onboarded", "0") == "1"}
@@ -493,6 +512,8 @@ def put_settings(body: SettingsPatch, ctx: dict = Depends(needs("admin"))):
         teams.audit(ctx["ws"]["id"], ctx["user"], "workspace.settings", f"automatic analysis {'on' if body.auto_analyze else 'off'}")
         if body.auto_analyze:
             analysis.auto_analyze()       # catch up on anything that arrived while it was off
+    if body.onboarded is not None:
+        core.set_setting("onboarded", "1" if body.onboarded else "0")
     return get_settings()
 
 
@@ -519,6 +540,22 @@ def generate_product(body: ProductIn):
 
 
 # ---------------------------------------------------------------- evidence
+@api.post("/product/from-doc")
+async def product_from_doc(file: UploadFile = File(...)):
+    """Describe the product and draft its canvas from a document (brief, strategy doc, pitch)."""
+    raw = await _read_upload(file)
+    try:
+        text = await run_in_threadpool(ingest.extract_text, file.filename or "", raw)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    if not text.strip():
+        raise HTTPException(400, "That document has no text to read.")
+    cur = core.get_product()
+    name, overview, _ = await run_in_threadpool(ai.product_from_document, text)
+    canvas, mode = await run_in_threadpool(ai.generate_canvas, cur["name"] or name, overview, core.list_problems(), text)
+    return {**core.save_product(cur["name"] or name, overview, canvas), "mode": mode}
+
+
 @api.get("/evidence")
 def get_evidence():
     return core.list_evidence()
@@ -552,34 +589,44 @@ def move_evidence(eid: int, body: EvidenceMove):
     return core.one("SELECT * FROM evidence WHERE id=?", (eid,))
 
 
-def _ingest_upload(filename: str, raw: bytes) -> int:
-    text = raw.decode("utf-8", errors="replace")
-    added = 0
-    if filename.lower().endswith(".csv"):
-        reader = csv.DictReader(io.StringIO(text))
+def _ingest_upload(filename: str, raw: bytes) -> dict:
+    ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
+    if ext == "csv":
+        reader = csv.DictReader(io.StringIO(raw.decode("utf-8", errors="replace")))
         cols = {c.lower(): c for c in (reader.fieldnames or [])}
         text_col = cols.get("text") or cols.get("feedback") or cols.get("message") or cols.get("body")
         if not text_col:
             raise HTTPException(400, "CSV needs a column named text, feedback, message, or body")
         src_col = cols.get("source")
+        added = 0
         for r in reader:
             if (r.get(text_col) or "").strip():
                 core.add_evidence(r[text_col], (r.get(src_col) if src_col else "") or filename or "csv")
                 added += 1
-    else:
-        for chunk in [c for c in text.split("\n\n") if c.strip()]:
-            core.add_evidence(chunk, filename or "upload")
-            added += 1
-    return added
+        return {"added": added, "skipped": 0, "truncated": False}
+    try:
+        text = ingest.extract_text(filename, raw)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    items, truncated = ingest.to_evidence(filename, text, merge=ext in ("pdf", "docx"))
+    added = sum(1 for it in items if core.add_evidence(it["text"], it["source"], it["external_ref"]))
+    return {"added": added, "skipped": len(items) - added, "truncated": truncated}
+
+
+async def _read_upload(file: UploadFile) -> bytes:
+    raw = await file.read(ingest.MAX_UPLOAD_BYTES + 1)
+    if len(raw) > ingest.MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"That file is too large. The limit is {ingest.MAX_UPLOAD_BYTES // (1024 * 1024)} MB.")
+    return raw
 
 
 @api.post("/evidence/upload")
 async def upload_evidence(background: BackgroundTasks, file: UploadFile = File(...)):
-    """CSV with a 'text' column (optional 'source'), or a plain text file split on blank lines."""
-    raw = await file.read()
-    added = await run_in_threadpool(_ingest_upload, file.filename or "", raw)   # many inserts: keep them off the event loop
+    """CSV with a 'text' column, or a PDF, Word, Markdown or text document. Re-uploading a document never duplicates it."""
+    raw = await _read_upload(file)
+    result = await run_in_threadpool(_ingest_upload, file.filename or "", raw)   # parsing and many inserts: off the event loop
     background.add_task(analysis.auto_analyze, db.current_schema())
-    return {"added": added}
+    return result
 
 
 # ---------------------------------------------------------------- analysis and problems
@@ -793,8 +840,10 @@ def ask(body: AskIn):
             return {"mode": "error", "answer": "I could not reach Claude just now. Check your API key and connection, then ask again."}
     s = core.get_stats()
     top = core.compute_insights()[:3]
+    spent = ai.has_key() and not usage.has_credit()
     lines = [
-        "I am running in offline mode, so I can only summarize. Set ANTHROPIC_API_KEY and restart to ask me anything about your evidence.",
+        (f"This workspace has used its AI credits for the month (they reset on {usage.summary()['resets_at'][:10]}), so I can only summarize."
+         if spent else "I am running in offline mode, so I can only summarize. Set ANTHROPIC_API_KEY and restart to ask me anything about your evidence."),
         "",
         f"Right now: {s['evidence']} evidence items, {s['problems']} problems, {s['initiatives']} initiatives, {s['measured']} measured.",
     ]

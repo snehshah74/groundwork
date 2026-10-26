@@ -60,6 +60,11 @@ def _can_write() -> bool:
 _READ_ONLY = "Your token is for a view-only member, so this is not allowed."
 
 
+def _log(initiative_id: int | None, tool: str, text: str) -> None:
+    """Record what the agent did, so the team can see it next to the spec and the outcome (Governance page)."""
+    core.record_agent_event(initiative_id, _member["email"], tool, text)
+
+
 @mcp.tool()
 def list_initiatives(status: str = "") -> str:
     """List initiatives with their id, title, status and evidence count. Optionally filter by status
@@ -97,6 +102,7 @@ def get_initiative_context(initiative_id: int) -> str:
         return f"Initiative {initiative_id} not found."
     if _can_write():
         core.record_dispatch(initiative_id, "mcp")
+    _log(initiative_id, "get_initiative_context", "read the build brief")
     return md
 
 
@@ -140,6 +146,7 @@ def get_evidence(initiative_id: int) -> str:
     i = core.get_initiative(initiative_id)
     if not i:
         return f"Initiative {initiative_id} not found."
+    _log(initiative_id, "get_evidence", "read the customer evidence")
     return "\n\n".join(f"[{e['source']} #{e['id']}] {e['text']}" for e in i["evidence"]) or "No evidence."
 
 
@@ -149,11 +156,13 @@ def add_evidence(text: str, source: str = "note") -> str:
     survey or note. It is grouped into a problem the next time the team analyzes evidence."""
     _ws()
     if not _can_write():
+        _log(None, "add_evidence", "tried to add evidence but is view-only")
         return _READ_ONLY
     try:
         e = core.add_evidence(text, source)
     except ValueError as err:
         return str(err)
+    _log(None, "add_evidence", f"added evidence #{e['id']} ({e['source']})")
     return f"Added evidence #{e['id']} ({e['source']})."
 
 
@@ -162,11 +171,14 @@ def update_status(initiative_id: int, status: str) -> str:
     """Update an initiative's status: proposed, approved, in_progress, or shipped."""
     _ws()
     if not _can_write():
+        _log(initiative_id, "update_status", "tried to change status but is view-only")
         return _READ_ONLY
     try:
         i = core.set_status(initiative_id, status)
     except ValueError as e:
         return str(e)
+    if i:
+        _log(initiative_id, "update_status", f"changed status to {i['status']}")
     return f"Initiative {initiative_id} is now {i['status']}." if i else f"Initiative {initiative_id} not found."
 
 
@@ -176,11 +188,14 @@ def report_outcome(initiative_id: int, verdict: str, metric_value: str = "", not
     metric_value is the measured number (for example '37% fewer tickets'). note is free text."""
     _ws()
     if not _can_write():
+        _log(initiative_id, "report_outcome", "tried to record an outcome but is view-only")
         return _READ_ONLY
     try:
         i = core.record_outcome(initiative_id, verdict, metric_value, note)
     except ValueError as e:
         return str(e)
+    if i:
+        _log(initiative_id, "report_outcome", f"recorded an outcome: {verdict}" + (f" ({metric_value})" if metric_value else ""))
     return f"Outcome '{verdict}' recorded for initiative {initiative_id}." if i else f"Initiative {initiative_id} not found."
 
 
@@ -199,6 +214,7 @@ def push_initiative(initiative_id: int, provider: str = "linear") -> str:
     """Create or update the issues for an initiative and its stories in a connected work tracker such as Linear."""
     _ws()
     if not _can_write():
+        _log(initiative_id, "push_initiative", f"tried to push to {provider} but is view-only")
         return _READ_ONLY
     try:
         r = integrations.push(provider, initiative_id)
@@ -206,6 +222,7 @@ def push_initiative(initiative_id: int, provider: str = "linear") -> str:
         return str(e)
     except LookupError:
         return f"Initiative {initiative_id} not found."
+    _log(initiative_id, "push_initiative", f"pushed to {provider}")
     keys = ", ".join(l["external_key"] for l in r["links"] if l["kind"] == "initiative")
     return f"Sent to {provider}: {r['created']} created, {r['updated']} updated. Parent issue {keys}."
 

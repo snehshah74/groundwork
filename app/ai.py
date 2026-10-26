@@ -9,12 +9,19 @@ import json
 import os
 import re
 
+from . import usage
+
 MODEL = os.environ.get("GROUNDWORK_MODEL", "claude-sonnet-5-5")
 MAX_CLUSTER_ITEMS = 250   # per analysis run; anything beyond stays ungrouped for the next run
 
 
-def ai_enabled() -> bool:
+def has_key() -> bool:
     return bool(os.environ.get("ANTHROPIC_API_KEY"))
+
+
+def ai_enabled() -> bool:
+    """Is Claude available right now: a key is set and this workspace still has credits this month (see usage.py)."""
+    return has_key() and usage.has_credit()
 
 
 def _client():
@@ -35,13 +42,34 @@ def _extract_json(text: str):
     return json.loads(text[start : end + 1])
 
 
+_KIND_BY_PROMPT = {"CLUSTER_SYSTEM": "group", "ASSIGN_SYSTEM": "group", "SPEC_SYSTEM": "spec", "CANVAS_SYSTEM": "canvas",
+                   "PRODUCT_DOC_SYSTEM": "canvas", "THEMES_SYSTEM": "themes", "STORIES_SYSTEM": "stories"}
+
+
+def _kind(system: str) -> str:
+    """What an AI call is for, from which prompt it uses. Keeps _ask's signature stable for the callers and the tests."""
+    return next((kind for name, kind in _KIND_BY_PROMPT.items() if system is globals().get(name)), "ai")
+
+
+def _metered(kind: str, call):
+    """Run one Claude call if the workspace can afford it, and record its tokens. A call that fails is not charged."""
+    if not usage.allowed(kind):
+        raise RuntimeError("AI credits for this month are used up")
+    msg = call()
+    try:
+        usage.record(kind, MODEL, msg.usage.input_tokens, msg.usage.output_tokens)
+    except Exception as exc:     # metering must never break the feature it measures
+        print(f"[groundwork] could not record AI usage: {exc}")
+    return msg
+
+
 def _ask(system: str, user: str, max_tokens: int = 4000):
-    msg = _client().messages.create(
+    msg = _metered(_kind(system), lambda: _client().messages.create(
         model=MODEL,
         max_tokens=max_tokens,
         system=system,
         messages=[{"role": "user", "content": user}],
-    )
+    ))
     return _extract_json("".join(b.text for b in msg.content if b.type == "text"))
 
 
@@ -331,17 +359,19 @@ CANVAS_SYSTEM = (
     "product canvas. Return ONLY a JSON object with exactly these keys: customer_segments, problem, "
     "unique_value, solution, channels, key_metrics, revenue, costs, unfair_advantage. Each value is a string "
     "of 1 to 4 short lines separated by newline characters, no bullets. Be concrete and specific to this "
-    "product. If something is unknown, make a labelled best guess starting with 'Assumption:'. "
+    "product. If a source_excerpt is given, ground the canvas in it. "
+    "If something is unknown, make a labelled best guess starting with 'Assumption:'. "
     "Do not use em dashes."
 )
 
 
-def generate_canvas(name: str, overview: str, problems: list[dict]) -> tuple[dict, str]:
+def generate_canvas(name: str, overview: str, problems: list[dict], context: str = "") -> tuple[dict, str]:
     if ai_enabled():
         try:
             payload = {
                 "name": name,
                 "overview": overview,
+                "source_excerpt": context[:6000],
                 "customer_problems": [
                     {"title": p["title"], "summary": p.get("summary", ""), "evidence_count": p.get("evidence_count", 0)}
                     for p in problems[:10]
@@ -358,6 +388,27 @@ def generate_canvas(name: str, overview: str, problems: list[dict]) -> tuple[dic
     canvas["problem"] = "\n".join(p["title"] for p in problems[:3])
     canvas["key_metrics"] = "Activation rate\nWeekly active accounts\nSupport contacts per account"
     return canvas, "offline"
+
+
+PRODUCT_DOC_SYSTEM = (
+    "You read a product document (a brief, strategy doc, pitch or PRD). Return ONLY a JSON object with keys: name (the "
+    "product's name, or an empty string if the document does not give one) and overview (2 or 3 plain sentences on what "
+    "it does, for whom, and the problem it solves). Do not use em dashes."
+)
+
+
+def product_from_document(text: str) -> tuple[str, str, str]:
+    """(name, overview, mode) for a product described in a document."""
+    if ai_enabled():
+        try:
+            data = _ask(PRODUCT_DOC_SYSTEM, text[:12000], max_tokens=600)
+            if isinstance(data, dict) and str(data.get("overview", "")).strip():
+                return str(data.get("name", ""))[:80].strip(), str(data["overview"]).strip()[:700], "claude"
+        except Exception as exc:
+            print(f"[groundwork] Claude document summary failed, using offline mode: {exc}")
+    flat = " ".join(text.split())
+    sentences = re.split(r"(?<=[.!?])\s+", flat)
+    return "", " ".join(sentences[:2])[:400], "offline"
 
 
 # ---------------------------------------------------------------- themes
@@ -479,5 +530,5 @@ def ask_velo(messages: list[dict], digest: str) -> str:
         msgs.pop(0)
     if not msgs or msgs[-1]["role"] != "user":
         raise ValueError("Ask a question first")
-    reply = _client().messages.create(model=MODEL, max_tokens=900, system=VELO_SYSTEM + digest, messages=msgs)
+    reply = _metered("ask", lambda: _client().messages.create(model=MODEL, max_tokens=900, system=VELO_SYSTEM + digest, messages=msgs))
     return "".join(b.text for b in reply.content if b.type == "text").strip()

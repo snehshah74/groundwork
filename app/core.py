@@ -129,6 +129,29 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         UPDATE initiatives SET updated_at = created_at WHERE updated_at IS NULL;
     """),
     (4, "theme priority for ranking", "ALTER TABLE themes ADD COLUMN IF NOT EXISTS priority INTEGER"),
+    (5, "AI usage metering", """
+        CREATE TABLE IF NOT EXISTS ai_usage (
+            id BIGSERIAL PRIMARY KEY,
+            kind TEXT NOT NULL,
+            model TEXT NOT NULL DEFAULT '',
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            credits INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS ai_usage_created ON ai_usage (created_at);
+    """),
+    (6, "agent activity log", """
+        CREATE TABLE IF NOT EXISTS agent_events (
+            id BIGSERIAL PRIMARY KEY,
+            initiative_id BIGINT REFERENCES initiatives(id) ON DELETE CASCADE,
+            actor TEXT NOT NULL,
+            tool TEXT NOT NULL,
+            detail TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS agent_events_initiative ON agent_events (initiative_id, id DESC);
+    """),
 ]
 
 _ready: set[str] = set()
@@ -591,6 +614,72 @@ def delete_story(sid: int) -> bool:
         if gone and row:
             _touch(c, row["initiative_id"])
         return gone
+
+
+# ---------- governance: what agents did, against the spec and the outcome ----------
+
+def record_agent_event(initiative_id: int | None, actor: str, tool: str, detail: str) -> None:
+    """Log something an agent did over MCP. `detail` is a plain sentence shown as is ("read the build brief")."""
+    if initiative_id is not None and not one("SELECT 1 AS x FROM initiatives WHERE id=?", (initiative_id,)):
+        initiative_id = None
+    with conn() as c:
+        c.execute("INSERT INTO agent_events(initiative_id, actor, tool, detail, created_at) VALUES (?,?,?,?,?)",
+                  (initiative_id, actor, tool, detail[:300], now()))
+
+
+def initiative_activity(iid: int, limit: int = 60) -> list[dict]:
+    """Deliveries (the brief sent somewhere) and agent actions for one initiative, newest first."""
+    out = [{"at": d["created_at"], "kind": "dispatch", "who": d["target"], "text": f"brief sent to {d['target']}", "id": d["id"]}
+           for d in rows("SELECT * FROM dispatches WHERE initiative_id=? ORDER BY id DESC LIMIT ?", (iid, limit))]
+    out += [{"at": e["created_at"], "kind": "agent", "who": e["actor"], "text": e["detail"], "id": e["id"]}
+            for e in rows("SELECT * FROM agent_events WHERE initiative_id=? ORDER BY id DESC LIMIT ?", (iid, limit))]
+    return sorted(out, key=lambda x: (x["at"], x["id"]), reverse=True)[:limit]
+
+
+STALLED_DAYS = 14
+FLAG_LEVEL = {"stale": "attention", "no_stories": "attention", "no_outcome": "attention", "no_criteria": "info", "stalled": "info"}
+
+
+def governance() -> dict:
+    """Each initiative's spec, what has been sent where, what agents did, and the outcome, with flags for the things
+    that go wrong: a stale brief while building, work sent out without stories, nothing to build against, shipped but
+    never measured, in progress with no activity."""
+    sent: dict[int, list[dict]] = {}
+    for r in rows("SELECT initiative_id, target, MAX(created_at) AS last_at, COUNT(*) AS n FROM dispatches GROUP BY initiative_id, target ORDER BY MAX(created_at) DESC"):
+        sent.setdefault(r["initiative_id"], []).append({"target": r["target"], "last_at": r["last_at"], "count": r["n"]})
+    acts = {r["initiative_id"]: r for r in rows(
+        "SELECT initiative_id, COUNT(*) AS n, MAX(created_at) AS last_at FROM agent_events WHERE initiative_id IS NOT NULL GROUP BY initiative_id")}
+    actors = {r["initiative_id"]: r["actor"] for r in rows(
+        "SELECT DISTINCT ON (initiative_id) initiative_id, actor FROM agent_events WHERE initiative_id IS NOT NULL ORDER BY initiative_id, id DESC")}
+    items, counts = [], {code: 0 for code in FLAG_LEVEL}
+    for i in list_initiatives():
+        building = i["status"] in ("approved", "in_progress")
+        done = i["status"] in ("shipped", "measured")
+        ctx, a = i["context"], acts.get(i["id"])
+        flags: list[dict] = []
+
+        def flag(code: str, text: str) -> None:
+            flags.append({"code": code, "level": FLAG_LEVEL[code], "text": text})
+            counts[code] += 1
+
+        if ctx["stale"] and building:
+            flag("stale", f"Brief is out of date: {' and '.join(ctx['reasons'])}")
+        if ctx["sent_at"] and not i["story_count"] and not done:
+            flag("no_stories", "Sent out without a story map")
+        if building and not i["acceptance_criteria"]:
+            flag("no_criteria", "No acceptance criteria to build against")
+        if i["status"] == "shipped" and i["latest_verdict"] in (None, "too_early"):
+            flag("no_outcome", "Shipped but not measured yet")
+        last = max([x for x in (ctx["sent_at"], a["last_at"] if a else None, i.get("updated_at")) if x], default=None)
+        if i["status"] == "in_progress" and last:
+            days = (datetime.now(timezone.utc) - datetime.fromisoformat(last)).days
+            if days >= STALLED_DAYS:
+                flag("stalled", f"No activity for {days} days")
+        items.append({"id": i["id"], "title": i["title"], "status": i["status"], "sent_to": sent.get(i["id"], []),
+                      "agent_actions": a["n"] if a else 0, "last_agent_at": a["last_at"] if a else None, "last_actor": actors.get(i["id"]),
+                      "stories": i["story_count"], "criteria": len(i["acceptance_criteria"]), "context": ctx, "verdict": i["latest_verdict"], "flags": flags})
+    items.sort(key=lambda x: (-sum(f["level"] == "attention" for f in x["flags"]), -len(x["flags"]), -x["id"]))
+    return {"summary": {**counts, "flagged": sum(1 for x in items if x["flags"]), "total": len(items)}, "items": items}
 
 
 # ---------- prioritization ----------

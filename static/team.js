@@ -20,7 +20,7 @@ G.views.team = async () => {
   const role = t.workspace.role;
   const admin = role === 'admin' || role === 'owner';
   const audit = admin ? await api('/team/audit') : [];
-  const settings = await api('/settings');
+  const [settings, ai] = await Promise.all([api('/settings'), api('/usage')]);
   const roleSelect = (m) => {
     const locked = !admin || (m.role === 'owner' && role !== 'owner');
     const opts = t.roles.filter(r => role === 'owner' || r !== 'owner');
@@ -58,7 +58,14 @@ G.views.team = async () => {
       <span class="small"><b>${esc(e.email)}</b> ${esc(AUDIT_LABEL[e.action] || e.action)} ${esc(e.detail)}</span></div>`).join('') : '<p class="muted small" style="margin:0">Nothing yet.</p>'}
       <div class="actions" style="margin-top:12px"><a class="btn small" href="/api/team/export" download>Export all workspace data (JSON)</a></div></div>` : '';
 
-  const prefs = `<h2 class="group-title">Workspace settings</h2><div class="panel">
+  const pct = ai.limit ? Math.min(100, Math.round(ai.used / ai.limit * 100)) : 0;
+  const usageBox = `<h2 class="group-title">AI usage</h2><div class="panel stack">
+    <div class="spread"><b>${ai.limit ? `${ai.used} of ${ai.limit} credits used this month` : `${ai.used} credits used this month`}</b>
+      <span class="small muted">${ai.limit ? `Resets ${fmtDate(ai.resets_at)}` : 'No limit set'}</span></div>
+    ${ai.limit ? `<div class="scorebar" style="max-width:none" role="img" aria-label="${pct}% of credits used"><i style="width:${pct}%;background:${pct >= 100 ? 'var(--danger)' : 'var(--accent)'}"></i></div>` : ''}
+    <p class="small muted" style="margin:0">${Object.keys(ai.by_kind).length ? Object.entries(ai.by_kind).map(([k, n]) => `${esc(k)} ${n}`).join(' &middot; ') : 'Nothing yet. Offline drafts are free.'}
+      One credit is one AI action; larger ones such as prototypes cost more. When credits run out, drafts fall back to basic mode.</p></div>`;
+  const prefs = `${usageBox}<h2 class="group-title">Workspace settings</h2><div class="panel">
     <label class="switch"><input type="checkbox" data-change="setting-auto" ${settings.auto_analyze ? 'checked' : ''} ${admin ? '' : 'disabled'}>
       <span><b>Group new evidence automatically</b><br><span class="small muted">When evidence arrives, from you, an upload or an integration, it joins the matching problem, or forms a new one once enough has piled up. Turn off to group by hand.</span></span></label></div>`;
 

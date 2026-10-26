@@ -289,7 +289,8 @@ G.views.initiative = async r => {
         <div class="panel"><h2>1. Connect your agent once</h2>
           <p class="sub small">Run this once from the folder where you installed Groundwork. The token tells the agent which workspace is yours, so keep it private.</p>
           <pre class="brief" style="max-height:none">${esc(mcpCmd)}</pre>
-          <div class="actions" style="margin-top:10px"><button class="btn small" data-act="copy-text" data-msg="Command copied" data-text="${esc(mcpCmd)}">Copy command</button></div></div>
+          <div class="actions" style="margin-top:10px"><button class="btn small" data-act="copy-text" data-msg="Command copied" data-text="${esc(mcpCmd)}">Copy command</button>
+            <button class="btn small quiet" data-act="rotate-token">Rotate token</button></div></div>
         <div class="panel"><h2>2. Tell the agent what to build</h2><pre class="brief" style="max-height:none">${esc(prompt)}</pre>
           <div class="actions" style="margin-top:10px"><button class="btn small" data-act="copy-prompt">Copy prompt</button></div></div>
         ${trackerPanel(i, integs, links)}

@@ -128,7 +128,7 @@ def test_supabase_api_roles_cannot_reach_our_data(client):
         c.execute("DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='anon') THEN CREATE ROLE anon NOLOGIN; END IF; "
                   "IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='authenticated') THEN CREATE ROLE authenticated NOLOGIN; END IF; END $$")
     # the same lock-down runs on a fresh install (shared schema) and on each new workspace
-    from app import auth, core
+    from app import auth
     auth._shared_ready = False
     auth.init_shared()
     signup(client, "a@x.com").get("/api/status")                       # first signed-in request creates the workspace schema

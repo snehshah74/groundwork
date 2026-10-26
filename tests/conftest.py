@@ -32,7 +32,6 @@ def client():
     _wipe()
     auth.init_shared()
     from app import main
-    main._failures.clear()
     with TestClient(main.app) as c:
         yield c
 

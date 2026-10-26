@@ -117,6 +117,8 @@ CREATE TABLE IF NOT EXISTS sync_log (
 # Append-only. Never edit a released migration: add a new (version, description, sql) instead.
 MIGRATIONS: list[tuple[int, str, str]] = [
     (1, "baseline", SCHEMA),
+    (2, "importers never duplicate evidence",
+     "CREATE UNIQUE INDEX IF NOT EXISTS evidence_external_ref_uq ON evidence (external_ref) WHERE external_ref IS NOT NULL"),
 ]
 
 _ready: set[str] = set()
@@ -195,17 +197,19 @@ def save_product(name: str | None = None, overview: str | None = None, canvas: d
 
 # ---------- evidence ----------
 
-def add_evidence(text: str, source: str = "note") -> dict:
+def add_evidence(text: str, source: str = "note", external_ref: str | None = None) -> dict | None:
+    """Add one piece of evidence. With an external_ref (an importer's stable id for the item), adding the same ref
+    twice is a no-op and returns None."""
     text = text.strip()
     if not text:
         raise ValueError("Evidence text is empty")
     with conn() as c:
-        cur = c.execute(
-            "INSERT INTO evidence(source, text, created_at) VALUES (?,?,?) RETURNING id",
-            (source.strip() or "note", text, now()),
-        )
-        eid = cur.fetchone()["id"]
-    return one("SELECT * FROM evidence WHERE id=?", (eid,))
+        row = c.execute(
+            "INSERT INTO evidence(source, text, external_ref, created_at) VALUES (?,?,?,?) "
+            "ON CONFLICT (external_ref) WHERE external_ref IS NOT NULL DO NOTHING RETURNING id",
+            (source.strip() or "note", text, external_ref, now()),
+        ).fetchone()
+    return one("SELECT * FROM evidence WHERE id=?", (row["id"],)) if row else None
 
 
 def delete_evidence(eid: int) -> bool:
@@ -505,6 +509,19 @@ def update_story(sid: int, data: dict) -> dict | None:
 def delete_story(sid: int) -> bool:
     with conn() as c:
         return c.execute("DELETE FROM stories WHERE id=?", (sid,)).rowcount > 0
+
+
+# ---------- export ----------
+
+EXPORT_TABLES = ["themes", "problems", "evidence", "initiatives", "stories", "dispatches", "outcomes", "sync_links"]
+
+
+def export_workspace() -> dict:
+    """Everything the team entered, as plain data. Connections (credentials) are deliberately not included."""
+    out: dict = {"exported_at": now(), "product": get_product()}
+    for t in EXPORT_TABLES:
+        out[t] = rows(f"SELECT * FROM {t} ORDER BY id")
+    return out
 
 
 # ---------- stats, activity, insights ----------

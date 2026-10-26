@@ -201,3 +201,42 @@ def invite_preview(raw_token: str) -> dict | None:
         "WHERE i.token_hash=? AND i.accepted_at IS NULL AND i.expires_at > ?",
         (h, _iso(_now())),
     )
+
+
+# ---------------------------------------------------------------- audit log
+
+def audit(workspace_id: int, user: dict | None, action: str, detail: str = "") -> None:
+    with db.conn(db.SHARED) as c:
+        c.execute(
+            "INSERT INTO audit_log(workspace_id, user_id, actor, action, detail, created_at) VALUES (?,?,?,?,?,?)",
+            (workspace_id, user["id"] if user else None, user["email"] if user else "system", action, detail[:500], _iso(_now())),
+        )
+
+
+def list_audit(workspace_id: int, limit: int = 100) -> list[dict]:
+    return db.rows("SELECT id, actor AS email, action, detail, created_at FROM audit_log WHERE workspace_id=? ORDER BY id DESC LIMIT ?", (workspace_id, limit))
+
+
+def get_member(workspace_id: int, user_id: int) -> dict | None:
+    return db.one("SELECT u.email, m.role FROM members m JOIN users u ON u.id=m.user_id WHERE m.workspace_id=? AND m.user_id=?", (workspace_id, user_id))
+
+
+# ---------------------------------------------------------------- account deletion
+
+def delete_user(user_id: int) -> None:
+    """Delete an account. Workspaces only they belonged to are deleted with it. A workspace others still use needs
+    another owner first, so deleting an account can never leave a team without one."""
+    mine = db.rows("SELECT m.workspace_id, w.name, m.role FROM members m JOIN workspaces w ON w.id=m.workspace_id WHERE m.user_id=?", (user_id,))
+    stuck, solo = [], []
+    for w in mine:
+        others = db.one("SELECT count(*) AS n FROM members WHERE workspace_id=? AND user_id<>?", (w["workspace_id"], user_id))["n"]
+        if others == 0:
+            solo.append(w)
+        elif w["role"] == "owner" and not db.one("SELECT 1 AS x FROM members WHERE workspace_id=? AND user_id<>? AND role='owner'", (w["workspace_id"], user_id)):
+            stuck.append(w["name"])
+    if stuck:
+        raise ValueError("Make someone else an owner of " + ", ".join(f'"{n}"' for n in stuck) + " first, or remove the other members.")
+    for w in solo:
+        delete_workspace(w["workspace_id"])
+    with db.conn(db.SHARED) as c:
+        c.execute("DELETE FROM users WHERE id=?", (user_id,))

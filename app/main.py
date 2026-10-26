@@ -5,7 +5,8 @@ import csv
 import io
 from pathlib import Path
 
-import time
+import hmac
+import os
 
 from fastapi import APIRouter, Body, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
@@ -28,6 +29,18 @@ auth.init_shared()
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 
+def _same_origin(request: Request) -> None:
+    """Browsers attach an Origin header to cross-site writes. Refuse any that is not this site, on top of SameSite cookies.
+    Requests with no Origin (curl, scripts) are not browser sessions being tricked, so they pass."""
+    origin = request.headers.get("origin")
+    if origin is None or request.method in SAFE_METHODS:
+        return
+    host = request.headers.get("host", "")
+    allowed = {f"http://{host}", f"https://{host}", *[o.strip() for o in os.environ.get("GROUNDWORK_ALLOWED_ORIGINS", "").split(",") if o.strip()]}
+    if origin not in allowed:
+        raise HTTPException(403, "Cross-site request blocked.")
+
+
 def _resolve(session_token: str | None, ws_cookie: str | None):
     """Session -> (user, active workspace membership). Creates a first workspace when there is none."""
     user = auth.user_by_session(session_token)
@@ -44,6 +57,7 @@ def _resolve(session_token: str | None, ws_cookie: str | None):
 
 async def require_user(request: Request) -> dict:
     """Every workspace route runs as a signed-in member, against the active workspace's own schema."""
+    _same_origin(request)
     user, ws = await run_in_threadpool(_resolve, request.cookies.get(auth.COOKIE), request.cookies.get(auth.WS_COOKIE))
     if not user:
         raise HTTPException(401, "Please log in to continue.")
@@ -82,6 +96,10 @@ class WorkspaceIn(BaseModel):
 class InviteIn(BaseModel):
     email: str
     role: str = "member"
+
+
+class DeleteAccountIn(BaseModel):
+    confirm: str
 
 
 class AcceptIn(BaseModel):
@@ -215,6 +233,11 @@ def signup_page(request: Request):
     return RedirectResponse("/app") if _session_user(request) else _page("signup.html")
 
 
+@app.get("/reset")
+def reset_page():
+    return _page("reset.html")
+
+
 @app.get("/auth/callback")
 def auth_callback():
     return _page("callback.html")
@@ -230,6 +253,15 @@ def app_page(request: Request):
     return _page("app.html") if _session_user(request) else RedirectResponse("/login")
 
 
+@app.get("/api/health")
+def health():
+    """For load balancers and uptime checks. 503 when the database cannot be reached."""
+    try:
+        return {"ok": True, "schema_version": db.schema_version(db.SHARED)}
+    except Exception:
+        return JSONResponse({"ok": False}, status_code=503)
+
+
 @app.get("/api/config")
 def config():
     """Public settings the sign-in pages need. The anon key is designed to be public."""
@@ -241,15 +273,11 @@ def config():
 
 
 # ---------------------------------------------------------------- accounts
-_failures: dict[str, list[float]] = {}
-MAX_FAILURES, WINDOW = 8, 600
+MAX_FAILURES, WINDOW = 8, 600     # per key, in seconds; counted in Postgres so every server process shares them
 
 
 def _throttled(key: str) -> bool:
-    now = time.time()
-    hits = [t for t in _failures.get(key, []) if now - t < WINDOW]
-    _failures[key] = hits
-    return len(hits) >= MAX_FAILURES
+    return auth.rate_blocked(key, MAX_FAILURES, WINDOW)
 
 
 def _ip(request: Request) -> str:
@@ -273,13 +301,14 @@ def _local_only():
 @public.post("/exchange")
 def exchange(body: ExchangeIn, request: Request):
     """Trade a Supabase access token (Google, Microsoft or email sign-in) for a Groundwork session."""
+    _same_origin(request)
     key = f"exchange:{_ip(request)}"
     if _throttled(key):
         raise HTTPException(429, "Too many attempts. Try again in a few minutes.")
-    _failures.setdefault(key, []).append(time.time())
     try:
         claims = auth.verify_supabase_token(body.access_token)
     except ValueError as e:
+        auth.rate_hit(key)          # only bad tokens count, so people sharing an address can all sign in
         raise HTTPException(401, str(e))
     meta = claims.get("user_metadata") or {}
     user = auth.upsert_supabase_user(claims["sub"], claims["email"], meta.get("full_name") or meta.get("name") or "")
@@ -289,10 +318,11 @@ def exchange(body: ExchangeIn, request: Request):
 @public.post("/signup")
 def signup(body: SignupIn, request: Request):
     _local_only()
+    _same_origin(request)
     key = f"signup:{_ip(request)}"
     if _throttled(key):
         raise HTTPException(429, "Too many attempts. Try again in a few minutes.")
-    _failures.setdefault(key, []).append(time.time())
+    auth.rate_hit(key)
     try:
         user = auth.create_user(body.email, body.password, body.name)
     except ValueError as e:
@@ -303,19 +333,21 @@ def signup(body: SignupIn, request: Request):
 @public.post("/login")
 def login(body: LoginIn, request: Request):
     _local_only()
+    _same_origin(request)
     key = f"login:{_ip(request)}:{body.email.strip().lower()}"
     if _throttled(key):
         raise HTTPException(429, "Too many attempts. Try again in a few minutes.")
     user = auth.authenticate(body.email, body.password)
     if not user:
-        _failures.setdefault(key, []).append(time.time())
+        auth.rate_hit(key)
         raise HTTPException(401, "That email and password do not match.")
-    _failures.pop(key, None)
+    auth.rate_clear(key)
     return _start_session(user)
 
 
 @public.post("/logout")
 def logout(request: Request):
+    _same_origin(request)
     auth.delete_session(request.cookies.get(auth.COOKIE))
     resp = JSONResponse({"ok": True})
     resp.delete_cookie(auth.COOKIE, path="/")
@@ -334,6 +366,7 @@ def me(request: Request):
 
 
 def _need_session(request: Request) -> dict:
+    _same_origin(request)
     user = _session_user(request)
     if not user:
         raise HTTPException(401, "Please log in to continue.")
@@ -372,7 +405,23 @@ def leave_workspace(wid: int, request: Request):
         teams.remove_member(wid, user["id"], m["role"])
     except ValueError as e:
         _bad(e)
+    teams.audit(wid, user, "member.leave", user["email"])
     resp = JSONResponse({"ok": True})
+    resp.delete_cookie(auth.WS_COOKIE, path="/")
+    return resp
+
+
+@public.delete("/account")
+def delete_account(body: DeleteAccountIn, request: Request):
+    user = _need_session(request)
+    if body.confirm.strip().lower() != user["email"].lower():
+        raise HTTPException(400, "Type your email address to confirm.")
+    try:
+        teams.delete_user(user["id"])
+    except ValueError as e:
+        _bad(e)
+    resp = JSONResponse({"deleted": True})
+    resp.delete_cookie(auth.COOKIE, path="/")
     resp.delete_cookie(auth.WS_COOKIE, path="/")
     return resp
 
@@ -394,6 +443,7 @@ def accept_invite(body: AcceptIn, request: Request):
         raise HTTPException(403, str(e))
     except ValueError as e:
         _bad(e)
+    teams.audit(ws["id"], user, "invite.accept", f"joined as {ws['role']}")
     resp = JSONResponse(ws)
     resp.set_cookie(auth.WS_COOKIE, str(ws["id"]), httponly=True, samesite="lax", secure=auth.SECURE_COOKIES, path="/")
     return resp
@@ -723,6 +773,7 @@ def rename_workspace(body: WorkspaceIn, ctx: dict = Depends(needs("admin"))):
         teams.rename_workspace(ctx["ws"]["id"], body.name)
     except ValueError as e:
         _bad(e)
+    teams.audit(ctx["ws"]["id"], ctx["user"], "workspace.rename", body.name.strip())
     return {"ok": True}
 
 
@@ -741,6 +792,7 @@ def create_invite(body: InviteIn, request: Request, ctx: dict = Depends(needs("a
     except ValueError as e:
         _bad(e)
     link = f"{str(request.base_url).rstrip('/')}/invite/{inv.pop('token')}"
+    teams.audit(ctx["ws"]["id"], ctx["user"], "member.invite", f"{inv['email']} as {inv['role']}")
     return {**inv, "link": link}
 
 
@@ -748,34 +800,54 @@ def create_invite(body: InviteIn, request: Request, ctx: dict = Depends(needs("a
 def revoke_invite(invite_id: int, ctx: dict = Depends(needs("admin"))):
     if not teams.revoke_invite(ctx["ws"]["id"], invite_id):
         raise HTTPException(404, "Invite not found")
+    teams.audit(ctx["ws"]["id"], ctx["user"], "invite.revoke", f"invite #{invite_id}")
     return {"deleted": invite_id}
 
 
 @api.patch("/team/members/{user_id}")
 def change_role(user_id: int, body: RolePatch, ctx: dict = Depends(needs("admin"))):
+    before = teams.get_member(ctx["ws"]["id"], user_id)
     try:
         teams.set_role(ctx["ws"]["id"], user_id, body.role, ctx["ws"]["role"])
     except LookupError as e:
         raise HTTPException(404, str(e))
     except ValueError as e:
         _bad(e)
+    teams.audit(ctx["ws"]["id"], ctx["user"], "member.role", f"{before['email']}: {before['role']} -> {body.role}")
     return {"ok": True}
 
 
 @api.delete("/team/members/{user_id}")
 def remove_member(user_id: int, ctx: dict = Depends(needs("admin"))):
+    before = teams.get_member(ctx["ws"]["id"], user_id)
     try:
         teams.remove_member(ctx["ws"]["id"], user_id, ctx["ws"]["role"])
     except LookupError as e:
         raise HTTPException(404, str(e))
     except ValueError as e:
         _bad(e)
+    teams.audit(ctx["ws"]["id"], ctx["user"], "member.remove", before["email"])
     return {"deleted": user_id}
 
 
 @api.post("/team/token/rotate")
 def rotate_token(ctx: dict = Depends(require_user)):
-    return {"api_token": teams.rotate_token(ctx["ws"]["id"], ctx["user"]["id"])}
+    token = teams.rotate_token(ctx["ws"]["id"], ctx["user"]["id"])
+    teams.audit(ctx["ws"]["id"], ctx["user"], "token.rotate", "")
+    return {"api_token": token}
+
+
+@api.get("/team/audit")
+def team_audit(ctx: dict = Depends(needs("admin"))):
+    return teams.list_audit(ctx["ws"]["id"])
+
+
+@api.get("/team/export")
+def team_export(ctx: dict = Depends(needs("admin"))):
+    """Everything the team entered, as a download. Credentials for integrations are not included."""
+    data = core.export_workspace()
+    teams.audit(ctx["ws"]["id"], ctx["user"], "workspace.export", "downloaded a full export")
+    return JSONResponse(data, headers={"Content-Disposition": f'attachment; filename="groundwork-workspace-{ctx["ws"]["id"]}.json"'})
 
 
 # ---------------------------------------------------------------- integrations
@@ -803,6 +875,7 @@ def list_integrations(request: Request):
 @api.post("/integrations/{provider}/connect")
 def connect_integration(provider: str, request: Request, body: dict = Body(...), ctx: dict = Depends(needs("admin"))):
     st = _integration_call(integrations.connect, provider, body, ctx["user"]["id"], ctx["ws"]["id"])
+    teams.audit(ctx["ws"]["id"], ctx["user"], "integration.connect", provider)
     return _with_urls(st, request)
 
 
@@ -819,6 +892,7 @@ def test_integration(provider: str, request: Request, ctx: dict = Depends(needs(
 @api.delete("/integrations/{provider}")
 def disconnect_integration(provider: str, ctx: dict = Depends(needs("admin"))):
     integrations.disconnect(provider)
+    teams.audit(ctx["ws"]["id"], ctx["user"], "integration.disconnect", provider)
     return {"disconnected": provider}
 
 
@@ -827,19 +901,36 @@ def sync_integration(provider: str):
     return _integration_call(integrations.sync, provider)
 
 
+@api.post("/integrations/{provider}/import")
+def import_integration(provider: str):
+    return _integration_call(integrations.import_now, provider)
+
+
 @api.get("/integrations/{provider}/log")
 def integration_log(provider: str):
     return integrations.recent_log(provider)
 
 
 @api.post("/initiatives/{iid}/push/{provider}")
-def push_initiative(iid: int, provider: str):
-    return _integration_call(integrations.push, provider, iid)
+def push_initiative(iid: int, provider: str, ctx: dict = Depends(require_user)):
+    result = _integration_call(integrations.push, provider, iid)
+    teams.audit(ctx["ws"]["id"], ctx["user"], "integration.push", f"initiative #{iid} to {provider}")
+    return result
 
 
 @api.get("/initiatives/{iid}/links")
 def initiative_links(iid: int):
     return integrations.links_for(iid)
+
+
+@app.post("/api/cron/run")
+async def cron_run(request: Request):
+    """For an external scheduler (Render cron, GitHub Actions, cron-job.org). Off unless GROUNDWORK_CRON_TOKEN is set."""
+    expected = os.environ.get("GROUNDWORK_CRON_TOKEN", "")
+    given = request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+    if len(expected) < 16 or not hmac.compare_digest(given, expected):
+        raise HTTPException(404, "Not found")      # 404 rather than 401: do not advertise that the endpoint exists
+    return await run_in_threadpool(integrations.run_scheduled)
 
 
 @app.post("/api/webhooks/{provider}/{token}")
@@ -868,6 +959,7 @@ def seed():
 
 @api.post("/reset")
 def reset(ctx: dict = Depends(needs("admin"))):
+    teams.audit(ctx["ws"]["id"], ctx["user"], "workspace.reset", "all evidence, problems and initiatives deleted")
     core.reset_workspace()
     return {"reset": True}
 

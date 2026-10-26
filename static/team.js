@@ -8,11 +8,18 @@ const ROLE_HELP = {
   viewer: 'Read only',
 };
 const roleLabel = r => r[0].toUpperCase() + r.slice(1);
+const AUDIT_LABEL = {
+  'member.invite': 'invited', 'invite.accept': 'accepted an invite:', 'invite.revoke': 'revoked', 'member.role': 'changed role of',
+  'member.remove': 'removed', 'member.leave': 'left the workspace:', 'integration.connect': 'connected', 'integration.disconnect': 'disconnected',
+  'integration.push': 'pushed', 'workspace.rename': 'renamed the workspace to', 'workspace.export': 'exported data:', 'workspace.reset': 'reset the workspace:',
+  'token.rotate': 'rotated their agent token',
+};
 
 G.views.team = async () => {
   const t = await api('/team');
   const role = t.workspace.role;
   const admin = role === 'admin' || role === 'owner';
+  const audit = admin ? await api('/team/audit') : [];
   const roleSelect = (m) => {
     const locked = !admin || (m.role === 'owner' && role !== 'owner');
     const opts = t.roles.filter(r => role === 'owner' || r !== 'owner');
@@ -45,7 +52,16 @@ G.views.team = async () => {
   const danger = role === 'owner' ? `<div class="danger-zone" style="margin-top:28px"><div><b>Delete this workspace</b><div class="small muted">Removes all evidence, initiatives and connections for everyone. This cannot be undone.</div></div>
       <button class="btn danger" data-act="delete-workspace">Delete workspace</button></div>` : '';
 
-  return head + `<div class="two-col"><div>${members}</div><div class="stack gap-lg">${invite}${roles}</div></div>${danger}`;
+  const activity = admin ? `<h2 class="group-title">Activity</h2>
+    <div class="panel">${audit.length ? audit.slice(0, 30).map(e => `<div class="log-row"><span class="muted small">${ago(e.created_at)}</span>
+      <span class="small"><b>${esc(e.email)}</b> ${esc(AUDIT_LABEL[e.action] || e.action)} ${esc(e.detail)}</span></div>`).join('') : '<p class="muted small" style="margin:0">Nothing yet.</p>'}
+      <div class="actions" style="margin-top:12px"><a class="btn small" href="/api/team/export" download>Export all workspace data (JSON)</a></div></div>` : '';
+
+  const account = `<h2 class="group-title">Your account</h2><div class="danger-zone"><div><b>Delete my account</b>
+    <div class="small muted">Removes your login and any workspace where you are the only member. Workspaces you share with others stay, and you must make someone else an owner first.</div></div>
+    <button class="btn danger" data-act="delete-account">Delete my account</button></div>`;
+
+  return head + `<div class="two-col"><div>${members}${activity}</div><div class="stack gap-lg">${invite}${roles}</div></div>${danger}${account}`;
 };
 
 Object.assign(G.actions, {
@@ -69,6 +85,15 @@ Object.assign(G.actions, {
     title: 'Rename workspace', submit: 'Save', fields: [{ name: 'name', label: 'Name', value: G.me.workspace.name }],
     onSubmit: async v => { await api('/team/workspace', { method: 'PATCH', body: { name: v.name } }); location.reload(); },
   }),
+  'delete-account': async () => {
+    const email = prompt(`This cannot be undone. Type your email address (${G.me.email}) to delete your account.`);
+    if (email === null) return;
+    try { await api('/auth/account', { method: 'DELETE', body: { confirm: email } }); location.href = '/'; } catch (e) { toast(e.message); }
+  },
+  'rotate-token': async () => {
+    if (!confirm('Replace your agent token? Agents using the old one stop working until you update them.')) return;
+    G.me.api_token = (await api('/team/token/rotate', { method: 'POST' })).api_token; toast('New token created'); render();
+  },
   'delete-workspace': async () => {
     if (prompt(`Type the workspace name to delete it: ${G.me.workspace.name}`) !== G.me.workspace.name) return toast('Name did not match. Nothing was deleted.');
     await api('/team/workspace', { method: 'DELETE' }); location.href = '/app#/home'; location.reload();

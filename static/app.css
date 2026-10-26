@@ -345,7 +345,7 @@ pre.brief { background: color-mix(in srgb, var(--ink) 5%, var(--raised)); border
 .pill.ok { background: color-mix(in srgb, var(--c-outcome) 14%, transparent); color: var(--c-outcome); }
 .pill.soon { background: transparent; border: 1px solid var(--line); color: var(--ink-3); }
 .group-title { margin: 28px 0 12px; font-size: .85rem; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); font-weight: 650; font-family: var(--text); }
-.log-row { display: grid; grid-template-columns: 70px 1fr auto; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line-2); font-size: .92rem; }
+.log-row { display: grid; grid-template-columns: 84px 1fr; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line-2); font-size: .92rem; }
 .log-row.bad b { color: var(--danger); }
 
 /* ---------- ask velo ---------- */

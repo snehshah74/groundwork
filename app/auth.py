@@ -10,6 +10,7 @@ import base64
 import hashlib
 import hmac
 import os
+import random
 import re
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -76,6 +77,22 @@ CREATE TABLE IF NOT EXISTS webhook_routes (
 # Append-only, like core.MIGRATIONS.
 SHARED_MIGRATIONS: list[tuple[int, str, str]] = [
     (1, "baseline", SHARED_SCHEMA),
+    (2, "rate limits in the database", """
+        CREATE TABLE IF NOT EXISTS rate_events (key TEXT NOT NULL, at TIMESTAMPTZ NOT NULL DEFAULT now());
+        CREATE INDEX IF NOT EXISTS rate_events_key_at ON rate_events (key, at);
+    """),
+    (3, "audit log", """
+        CREATE TABLE IF NOT EXISTS audit_log (
+            id BIGSERIAL PRIMARY KEY,
+            workspace_id BIGINT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+            user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+            actor TEXT NOT NULL DEFAULT '',
+            action TEXT NOT NULL,
+            detail TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS audit_log_workspace ON audit_log (workspace_id, id DESC);
+    """),
 ]
 
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -208,6 +225,25 @@ def verify_supabase_token(token: str) -> dict:
     if not claims.get("sub") or not claims.get("email"):
         raise ValueError("Your account has no email address.")
     return claims
+
+
+# ---------------------------------------------------------------- rate limits (shared by every server process)
+
+def rate_blocked(key: str, limit: int, window_seconds: int) -> bool:
+    n = db.one("SELECT count(*) AS n FROM rate_events WHERE key=? AND at > now() - make_interval(secs => ?)", (key, window_seconds))["n"]
+    return n >= limit
+
+
+def rate_hit(key: str) -> None:
+    with db.conn(db.SHARED) as c:
+        c.execute("INSERT INTO rate_events(key) VALUES (?)", (key,))
+        if random.random() < 0.02:   # housekeeping, spread over requests so no job is needed
+            c.execute("DELETE FROM rate_events WHERE at < now() - interval '1 day'")
+
+
+def rate_clear(key: str) -> None:
+    with db.conn(db.SHARED) as c:
+        c.execute("DELETE FROM rate_events WHERE key=?", (key,))
 
 
 # ---------------------------------------------------------------- sessions

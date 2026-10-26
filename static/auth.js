@@ -31,6 +31,7 @@ const cfg = await loadConfig();
 if (cfg.mode === 'supabase') {
   sb = await supabaseClient(cfg);
   document.getElementById('oauth').hidden = false;
+  const forgot = document.getElementById('forgot'); if (forgot) forgot.hidden = false;
   document.querySelectorAll('[data-provider]').forEach(btn => btn.addEventListener('click', async () => {
     errBox.classList.remove('show');
     const provider = btn.dataset.provider;

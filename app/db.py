@@ -11,6 +11,7 @@ Set DATABASE_URL to the Supabase connection string. The transaction pooler (port
 """
 from __future__ import annotations
 
+import atexit
 import contextvars
 import os
 from contextlib import contextmanager
@@ -35,6 +36,7 @@ def _get_pool() -> ConnectionPool:
             kwargs={"row_factory": dict_row, "prepare_threshold": None},  # no prepared statements: pgbouncer-safe
             open=True,
         )
+        atexit.register(close)   # close cleanly before the interpreter shuts down (Python 3.14 complains otherwise)
     return _pool
 
 

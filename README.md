@@ -13,7 +13,7 @@ Teams share a workspace, sign in with Google, Microsoft or email, push work to L
     cp .env.example .env      # then fill it in (see Setup)
     bash run.sh
 
-Open http://127.0.0.1:8000. Without `ANTHROPIC_API_KEY` it runs in offline mode (TF-IDF clustering and template drafts); with one, Claude does the grouping, specs, canvas, themes, stories and Ask Velo.
+Open http://127.0.0.1:8000 (if that port is busy, `run.sh` says what is using it; use another with `PORT=8001 bash run.sh`). Without `ANTHROPIC_API_KEY` it runs in offline mode (TF-IDF clustering and template drafts); with one, Claude does the grouping, specs, canvas, themes, stories and Ask Velo.
 
 ## Setup
 

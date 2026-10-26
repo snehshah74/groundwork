@@ -269,6 +269,7 @@ def config():
         "mode": "supabase" if auth.supabase_enabled() else "local",
         "supabase_url": auth.SUPABASE_URL if auth.supabase_enabled() else "",
         "supabase_anon_key": auth.SUPABASE_ANON_KEY if auth.supabase_enabled() else "",
+        "supabase_js_version": os.environ.get("SUPABASE_JS_VERSION", "2.45.4"),   # browser library; bump if Supabase rejects it
     }
 
 

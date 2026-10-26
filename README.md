@@ -20,9 +20,9 @@ Open http://127.0.0.1:8000. Without `ANTHROPIC_API_KEY` it runs in offline mode 
 **Database and sign-in: Supabase.** Dashboard labels move around, so treat these as a map rather than exact clicks.
 
 1. Create a Supabase project. Under Project Settings > Database copy the connection string into `DATABASE_URL`. Use the transaction pooler (port 6543) when deploying. Tables are created on first start.
-2. Under Project Settings > API copy the project URL into `SUPABASE_URL` and the anon public key into `SUPABASE_ANON_KEY`. Only projects still on the legacy shared secret also need `SUPABASE_JWT_SECRET`.
+2. Under Project Settings > API copy the project URL into `SUPABASE_URL` and the public key (labelled anon, or publishable and starting `sb_publishable_`) into `SUPABASE_ANON_KEY`. Never use the service_role or secret key. If sign-in reports an invalid key, raise `SUPABASE_JS_VERSION`. Only projects still on the legacy shared secret also need `SUPABASE_JWT_SECRET`.
 3. Authentication > Providers: enable **Google** and **Azure (Microsoft)**. Each needs an OAuth app (Google Cloud console, Microsoft Entra) whose redirect URI is the callback URL Supabase shows you. Email sign-in is on by default; keep "Confirm email" on.
-4. Authentication > URL Configuration: set the Site URL to your app's address and add `https://YOUR-DOMAIN/auth/callback` (and `http://localhost:8000/auth/callback` for development) to the redirect URLs.
+4. Authentication > URL Configuration: set the Site URL to your app's address and add `https://YOUR-DOMAIN/auth/callback` and `https://YOUR-DOMAIN/reset` (and the `http://localhost:8000` versions for development) to the redirect URLs. The first finishes Google, Microsoft and email-link sign-in; the second is where password-reset emails land.
 5. Set `GROUNDWORK_SECRET_KEY` to 32+ random characters. It encrypts integration credentials.
 
 Without `SUPABASE_URL` the login page falls back to a plain email and password form so you can develop locally. You still need `DATABASE_URL`; any Postgres 14+ works.

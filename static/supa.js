@@ -1,5 +1,5 @@
 /* Shared sign-in helpers: Supabase client, safe redirect target, and the token exchange with the server. */
-export const SUPABASE_JS = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm';
+const supabaseJs = v => `https://cdn.jsdelivr.net/npm/@supabase/supabase-js@${encodeURIComponent(v || '2.45.4')}/+esm`;
 
 export function nextPath() {
   const n = new URLSearchParams(location.search).get('next') || '/app';
@@ -11,7 +11,7 @@ export async function loadConfig() {
 }
 
 export async function supabaseClient(cfg) {
-  const { createClient } = await import(SUPABASE_JS);
+  const { createClient } = await import(supabaseJs(cfg.supabase_js_version));
   return createClient(cfg.supabase_url, cfg.supabase_anon_key);
 }
 

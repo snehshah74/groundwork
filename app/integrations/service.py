@@ -216,6 +216,55 @@ def sync(provider: str) -> dict:
     return {"checked": len(links), "changed": changed}
 
 
+# ---------------------------------------------------------------- discovery imports
+
+def import_now(provider: str) -> dict:
+    """Pull new customer evidence from a discovery tool. Safe to run repeatedly: items already imported are skipped."""
+    integ = _integration(provider)
+    cfg, secret, row = _load(provider)
+    try:
+        items, cursor = integ.import_evidence(cfg, secret, cfg.get("last_import") or None)
+    except IntegrationError as e:
+        log(provider, "pull", False, str(e))
+        raise
+    added = sum(1 for it in items if core.add_evidence(it["text"], it["source"], it["external_ref"]))
+    cfg["last_import"] = cursor
+    _store(provider, cfg, secret, row["connected_by"])
+    log(provider, "pull", True, f"Imported {added} new item(s), {len(items) - added} already had")
+    return {"added": added, "skipped": len(items) - added}
+
+
+# ---------------------------------------------------------------- scheduled run (every workspace)
+
+def run_scheduled() -> dict:
+    """Sync trackers and import from discovery tools in every workspace. One failing connection never stops the rest."""
+    out = {"workspaces": 0, "synced": 0, "imported": 0, "errors": 0}
+    for ws in db.rows("SELECT id FROM workspaces ORDER BY id"):
+        schema = db.schema_name(ws["id"])
+        core.init_workspace(schema)
+        db.use_schema(schema)
+        out["workspaces"] += 1
+        for row in core.rows("SELECT provider FROM connections"):
+            integ = catalog.get(row["provider"])
+            if not integ:
+                continue
+            try:
+                if integ.meta.kind == "tracker":
+                    sync(row["provider"])
+                    out["synced"] += 1
+                elif integ.meta.kind == "discovery":
+                    import_now(row["provider"])
+                    out["imported"] += 1
+            except Exception as e:      # logged per connection; the schedule keeps going
+                out["errors"] += 1
+                try:
+                    log(row["provider"], "pull", False, f"Scheduled run failed: {e}")
+                except Exception:
+                    pass
+    db.use_schema(None)
+    return out
+
+
 # ---------------------------------------------------------------- webhooks (no session: the URL token picks the workspace)
 
 def handle_webhook(provider: str, token: str, body: bytes, headers: dict) -> dict:

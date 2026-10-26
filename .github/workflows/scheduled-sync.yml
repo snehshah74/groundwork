@@ -1,0 +1,19 @@
+# Keeps trackers and discovery imports fresh without anyone clicking "Sync now".
+# Set two repository secrets to turn it on: APP_URL (https://your-app.example.com) and CRON_TOKEN
+# (the same value as GROUNDWORK_CRON_TOKEN on the server). Without them this job does nothing.
+name: scheduled-sync
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {}
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call the sync endpoint
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_TOKEN: ${{ secrets.CRON_TOKEN }}
+        run: |
+          if [ -z "$APP_URL" ] || [ -z "$CRON_TOKEN" ]; then echo "APP_URL and CRON_TOKEN secrets are not set; skipping."; exit 0; fi
+          curl --fail --silent --show-error --max-time 120 -X POST -H "Authorization: Bearer $CRON_TOKEN" "$APP_URL/api/cron/run"

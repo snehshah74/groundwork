@@ -44,25 +44,45 @@ Groundwork does not send email, so copy the link and share it.
 
 ## Integrations
 
-Open **Integrations**. Each connection is per workspace, and credentials are encrypted at rest.
+Open **Integrations**. Connections are per workspace and credentials are encrypted at rest. Admins connect; members push and sync.
 
-**Linear (ready).** Paste a personal API key (Linear > Settings > Account > Security & access), pick the team, then use **Push to Linear** on an initiative's Hand off tab. The initiative becomes a parent issue and each story a sub-issue; pushing again updates them rather than duplicating. For live status, add a webhook in Linear for Issues pointing at the URL shown on the card and paste its signing secret. **Sync now** pulls status without a webhook. Status mapping: backlog is proposed, unstarted is approved, started is in progress, completed is shipped. A measured initiative is never moved back.
+**Work trackers.** Pick where work should go, then use **Push to ...** on an initiative's Hand off tab. The initiative becomes the parent item and each story a child; pushing again updates them rather than duplicating. Status flows back and **only ever moves forward** (proposed, approved, in progress, shipped), so a freshly pushed item sitting in Backlog never undoes "in progress". A measured initiative is never moved.
 
-**Listed as coming soon:** Jira, Trello, Asana, GitHub Issues; Dovetail, Intercom, Zendesk, Gong, Fathom, Typeform; Gmail, Outlook, Slack. A new tracker is one class in `app/integrations/` implementing `Integration` and one line in `catalog.py`.
+| Tool | Parent / child | Status comes from | Live updates |
+| --- | --- | --- | --- |
+| **Linear** | issue / sub-issues | workflow state type | webhook (HMAC-signed) or Sync now |
+| **Jira Cloud** | Epic / Stories | status category (To Do, In Progress, Done) | webhook (HMAC-signed) or Sync now |
+| **Trello** | card / "Stories" checklist | the name of the list the card is in (Done, Doing, To Do, ...) | Sync now |
+
+Linear needs a personal API key, Jira an email plus API token (site must be `*.atlassian.net`; Data Center is not supported), Trello an API key plus token. Webhooks are optional: each card shows the URL and where to paste the signing secret.
+
+**Customer discovery.** **Zendesk** imports support tickets as evidence (subject and first message). Re-importing never duplicates: every item has a stable reference enforced by a unique index. The first import looks back 90 days, later ones continue from where the last stopped (up to 200 tickets per run). **Emails and phone numbers are masked** on the way in, because evidence ends up in specs and in briefs sent to agents and to Claude.
+
+**Scheduled runs.** `POST /api/cron/run` (or `python -m app.cron`) syncs every tracker and imports from every discovery tool in every workspace; one failing connection never stops the rest. The endpoint is off unless `GROUNDWORK_CRON_TOKEN` is set (16+ characters) and answers 404 otherwise. `.github/workflows/scheduled-sync.yml` calls it every 30 minutes once you add `APP_URL` and `CRON_TOKEN` as repository secrets.
+
+**Listed as coming soon:** Asana, GitHub Issues; Dovetail, Intercom, Gong, Fathom, Typeform; Gmail, Outlook, Slack. A new tool is one class in `app/integrations/` implementing `Integration` (see `base.py`) and one line in `catalog.py`. Trackers implement `connect`, `push_initiative`, `pull_status` and optionally `verify_webhook` and `parse_event`; importers implement `import_evidence`.
 
 ## Agents (MCP)
 
     python mcp_server.py            # stdio
     python mcp_server.py --http     # http on port 8765
 
-The Hand off tab shows a ready-made `claude mcp add` command containing your token. The agent acts as you in that workspace, with your role. Tools: `list_initiatives`, `list_problems`, `get_initiative_context`, `get_product_context`, `get_evidence`, `add_evidence`, `update_status`, `report_outcome`, `list_integrations`, `push_initiative`. It reads `DATABASE_URL` from the project's `.env`.
+The Hand off tab shows a ready-made `claude mcp add` command containing your token. The agent acts as you in that workspace, with your role. Tools: `list_initiatives`, `list_problems`, `get_initiative_context`, `get_product_context`, `get_evidence`, `add_evidence`, `update_status`, `report_outcome`, `list_integrations`, `push_initiative`. It reads `DATABASE_URL` from the project's `.env`. Rotate a leaked token from the Hand off tab.
+
+## Operations
+
+- **Migrations.** Schemas are versioned (`core.MIGRATIONS` for workspaces, `auth.SHARED_MIGRATIONS` for the shared schema). Never edit a released migration: append a new `(version, description, sql)`. Workspaces upgrade themselves on first use after a deploy, each migration all-or-nothing. `python -m app.migrate` upgrades every workspace ahead of time and prints what moved.
+- **Health.** `GET /api/health` returns 200 with the schema version, or 503 when the database is unreachable.
+- **Audit log and data.** Admins see who invited, changed roles, removed members, connected or pushed under **Team > Activity**, and can download the whole workspace as JSON (credentials excluded). Anyone can delete their own account: workspaces only they belonged to go with it, and a shared workspace needs another owner first.
+- **Abuse limits.** Failed logins are limited per address and email, counted in Postgres so they hold across server processes. Browser writes from another site are refused (Origin check, on top of SameSite cookies). Behind a proxy, run uvicorn with `--proxy-headers` so the real client address is used, and only when the proxy is trusted (the Render blueprint does).
+- **Passwords.** With Supabase, `/reset` sends the reset email and lets people choose a new password. Deleting an account removes it from Groundwork but the identity in Supabase Auth remains until you delete it in the Supabase dashboard.
 
 ## Tests
 
     pip install -r requirements-dev.txt
     TEST_DATABASE_URL=postgresql://user@localhost/throwaway python -m pytest tests
 
-The database is wiped every run, so point it at a throwaway one. Linear is tested against an in-memory fake of its API.
+The database is wiped every run, so point it at a throwaway one. The trackers and Zendesk are tested against in-memory fakes of their APIs; the fakes follow each tool's documented API, so run one real push per tool with a test account before relying on it.
 
 ## Deploy
 
@@ -70,7 +90,7 @@ GitHub stores the code but cannot run it. `render.yaml` is a Render Blueprint: N
 
 ## Not built
 
-Linear OAuth (API keys only), Jira, Trello, Asana, GitHub, and every discovery or inbox importer (listed, not working), password reset page, email delivery for invites, billing. The pricing on the landing page is a placeholder.
+Linear OAuth (API keys only), Trello webhooks, Asana, GitHub, and every discovery importer except Zendesk (listed, not working), Gmail and Outlook as inbox sources, SAML single sign-on, email delivery for invites, billing. Stories deleted in Groundwork are not closed in the tracker. The pricing on the landing page is a placeholder.
 
 ## Upgrading from the SQLite versions
 

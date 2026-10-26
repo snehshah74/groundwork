@@ -7,6 +7,7 @@ A provider implements only what it can do; the catalog shows the rest as unavail
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 
@@ -74,9 +75,22 @@ class Integration:
         return None
 
     # --- discovery
-    def import_evidence(self, cfg: dict, secret: dict, since: str | None) -> list[dict]:
-        """[{text, source, external_ref}]"""
+    def import_evidence(self, cfg: dict, secret: dict, since: str | None) -> tuple[list[dict], str]:
+        """Return ([{text, source, external_ref}], cursor). `since` is the cursor from the previous run (None the first time).
+        external_ref must be stable and unique per source item so re-importing never duplicates evidence."""
         raise NotImplementedError
+
+
+# ---------------------------------------------------------------- shared helpers for importers
+
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_PHONE = re.compile(r"(?<!\w)\+?\d[\d\s().-]{7,}\d(?!\w)")
+
+
+def scrub(text: str) -> str:
+    """Mask email addresses and phone numbers. Imported customer text ends up in specs and in briefs sent to agents
+    and to Claude, so personal contact details are removed on the way in."""
+    return _PHONE.sub("[phone]", _EMAIL.sub("[email]", text))
 
 
 # ---------------------------------------------------------------- shared rendering for trackers

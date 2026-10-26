@@ -6,8 +6,9 @@ from .base import Integration, Meta
 from .jira import Jira
 from .linear import Linear
 from .trello import Trello
+from .zendesk import Zendesk
 
-REGISTRY: dict[str, type[Integration]] = {"linear": Linear, "jira": Jira, "trello": Trello}
+REGISTRY: dict[str, type[Integration]] = {"linear": Linear, "jira": Jira, "trello": Trello, "zendesk": Zendesk}
 
 
 def _soon(id: str, name: str, kind: str, description: str) -> Meta:
@@ -21,7 +22,6 @@ COMING_SOON: list[Meta] = [
     # customer discovery
     _soon("dovetail", "Dovetail", "discovery", "Import research highlights and tagged insights as evidence."),
     _soon("intercom", "Intercom", "discovery", "Pull conversations and feedback from customers."),
-    _soon("zendesk", "Zendesk", "discovery", "Import support tickets as evidence."),
     _soon("gong", "Gong", "discovery", "Import call transcripts and key moments."),
     _soon("fathom", "Fathom", "discovery", "Import customer-call notes and transcripts."),
     _soon("typeform", "Typeform", "discovery", "Import survey responses as they arrive."),

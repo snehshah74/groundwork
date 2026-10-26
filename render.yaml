@@ -7,7 +7,7 @@ services:
     plan: free               # sleeps when idle; use a paid plan to keep it warm
     buildCommand: pip install -r requirements.txt
     startCommand: python -m uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
-    healthCheckPath: /api/auth/me
+    healthCheckPath: /api/health
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.7
@@ -25,3 +25,5 @@ services:
         sync: false
       - key: ANTHROPIC_API_KEY   # optional
         sync: false
+      - key: GROUNDWORK_CRON_TOKEN   # optional: enables POST /api/cron/run for scheduled sync and imports
+        generateValue: true

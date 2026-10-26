@@ -31,7 +31,9 @@ function integrationCard(p, admin) {
           <button class="btn small" data-act="save-webhook-secret" data-id="${p.id}" ${admin ? '' : 'disabled'}>Save</button></div></li>
       </ol></details>` : ''}
     ${last}
-    <div class="actions"><button class="btn small" data-act="sync-integration" data-id="${p.id}">Sync now</button>
+    <div class="actions">${p.kind === 'discovery'
+      ? `<button class="btn primary small" data-act="import-integration" data-id="${p.id}">Import now</button>`
+      : `<button class="btn small" data-act="sync-integration" data-id="${p.id}">Sync now</button>`}
       ${admin ? `<button class="btn small" data-act="test-integration" data-id="${p.id}">Test</button><button class="btn small danger" data-act="disconnect-integration" data-id="${p.id}" data-name="${esc(p.name)}">Disconnect</button>` : ''}</div></div>`;
 }
 
@@ -61,6 +63,10 @@ Object.assign(G.actions, {
     await api('/integrations/' + t.dataset.id, { method: 'DELETE' }); toast('Disconnected'); render();
   },
   'test-integration': t => busy(t, 'Testing...', async () => { await api(`/integrations/${t.dataset.id}/test`, { method: 'POST' }); toast('Connection works'); render(); }),
+  'import-integration': t => busy(t, 'Importing...', async () => {
+    const r = await api(`/integrations/${t.dataset.id}/import`, { method: 'POST' });
+    toast(`Imported ${plural(r.added, 'new item')}` + (r.skipped ? `, ${r.skipped} already had` : '')); render();
+  }),
   'sync-integration': t => busy(t, 'Syncing...', async () => {
     const r = await api(`/integrations/${t.dataset.id}/sync`, { method: 'POST' }); toast(`Checked ${plural(r.checked, 'item')}, ${r.changed} changed`); render();
   }),

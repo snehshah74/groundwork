@@ -365,6 +365,15 @@ pre.brief { background: color-mix(in srgb, var(--ink) 5%, var(--raised)); border
 .wiz-steps i { height: 5px; border-radius: 3px; background: var(--line); }
 .wiz-steps i.on { background: var(--accent); }
 
+.doc { max-width: 78ch; line-height: 1.6; }
+.doc h2, .doc h3, .doc h4, .doc h5 { margin: 1.3em 0 .4em; letter-spacing: -.02em; }
+.doc h2 { font-size: 1.35rem; } .doc h3 { font-size: 1.1rem; } .doc p, .doc ul, .doc ol { margin: .5em 0; }
+.doc ul { padding-left: 1.2em; } .doc li { margin: .2em 0; }
+.doc code { background: color-mix(in srgb, var(--ink) 7%, transparent); padding: 1px 5px; border-radius: 4px; font-size: .9em; }
+.cite { display: inline-block; font-size: .78em; font-weight: 600; color: var(--c-evidence); background: var(--soft-evidence); border-radius: 4px; padding: 0 5px; vertical-align: 1px; }
+.doc-edit { min-height: 420px; font: 13.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
+.proto-frame { width: 100%; height: 520px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
+
 /* ---------- ask velo ---------- */
 .ask { position: fixed; top: 0; right: 0; bottom: 0; width: min(430px, 100vw); background: var(--surface); border-left: 1px solid var(--line); z-index: 40; display: flex; flex-direction: column; transform: translateX(102%); transition: transform .22s ease; box-shadow: var(--shadow); }
 .ask.open { transform: none; }

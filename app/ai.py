@@ -9,7 +9,7 @@ import json
 import os
 import re
 
-from . import usage
+from . import docgen, usage
 
 MODEL = os.environ.get("GROUNDWORK_MODEL", "claude-sonnet-5-5")
 MAX_CLUSTER_ITEMS = 250   # per analysis run; anything beyond stays ungrouped for the next run
@@ -43,7 +43,8 @@ def _extract_json(text: str):
 
 
 _KIND_BY_PROMPT = {"CLUSTER_SYSTEM": "group", "ASSIGN_SYSTEM": "group", "SPEC_SYSTEM": "spec", "CANVAS_SYSTEM": "canvas",
-                   "PRODUCT_DOC_SYSTEM": "canvas", "THEMES_SYSTEM": "themes", "STORIES_SYSTEM": "stories"}
+                   "PRODUCT_DOC_SYSTEM": "canvas", "THEMES_SYSTEM": "themes", "STORIES_SYSTEM": "stories",
+                   "PRD_SYSTEM": "prd", "LAUNCH_SYSTEM": "launch", "PROTOTYPE_SYSTEM": "prototype", "INSIGHTS_SYSTEM": "insights"}
 
 
 def _kind(system: str) -> str:
@@ -507,6 +508,99 @@ def generate_stories(initiative: dict, evidence: list[dict]) -> tuple[list[dict]
         "description": initiative.get("success_metric", ""), "acceptance_criteria": ["Usage events are tracked for the new flow"],
     })
     return stories, "offline"
+
+
+# ---------------------------------------------------------------- initiative documents
+
+PRD_SYSTEM = (
+    "You are a senior product manager. Write a product requirements document in Markdown for an engineering team and their "
+    "coding agent, from the initiative, stories and customer evidence given. Sections, in order: Overview, Problem and evidence, "
+    "Who it is for, Success metric, Requirements (grouped by journey step, each with acceptance criteria as '- [ ]' items), "
+    "Out of scope, Open questions. Cite evidence only as [#id] using ids that appear in the input. Do not invent facts, "
+    "customers or numbers; label any guess 'Assumption:'. Do not use em dashes."
+)
+LAUNCH_SYSTEM = (
+    "You are a product marketing manager. Write a launch plan in Markdown from the initiative and evidence given. Sections: "
+    "Audience, Positioning, Announcement draft, Release notes, Checklist (as '- [ ]' items), How we will know it worked "
+    "(tie to the success metric). Do not invent customers or numbers; label guesses 'Assumption:'. Do not use em dashes."
+)
+PROTOTYPE_SYSTEM = (
+    "You build clickable prototypes. Return ONLY one complete HTML document that shows the main user flow across the given "
+    "stories as screens with working buttons. Inline CSS and JavaScript only. No external requests, images, fonts, links, "
+    "iframes or forms that submit. Use realistic placeholder data and say it is sample data. Keep it under 30 KB."
+)
+
+
+def _clean_citations(text: str, valid: set[int]) -> str:
+    """Drop [#id] citations that do not point at real evidence, so a model cannot cite something that is not there."""
+    return re.sub(r"\s?\[#(\d+)\]", lambda m: m.group(0) if int(m.group(1)) in valid else "", text)
+
+
+def _ask_text(system: str, user: str, max_tokens: int) -> str:
+    msg = _metered(_kind(system), lambda: _client().messages.create(
+        model=MODEL, max_tokens=max_tokens, system=system, messages=[{"role": "user", "content": user}]))
+    return "".join(b.text for b in msg.content if b.type == "text").strip()
+
+
+def generate_document(kind: str, i: dict, evidence: list[dict], product: dict) -> tuple[str, str, str]:
+    """(title, body, mode) for a PRD, launch plan or prototype of an initiative."""
+    title = {"prd": "PRD", "launch": "Launch plan", "prototype": "Prototype"}[kind] + f": {i['title']}"
+    system, tokens = {"prd": (PRD_SYSTEM, 3500), "launch": (LAUNCH_SYSTEM, 2500), "prototype": (PROTOTYPE_SYSTEM, 7000)}[kind]
+    if ai_enabled():
+        try:
+            payload = {
+                "product": {"name": product.get("name"), "overview": product.get("overview")},
+                "initiative": {k: i.get(k) for k in ("title", "persona", "problem_statement", "success_metric", "out_of_scope", "acceptance_criteria", "status")},
+                "stories": [{"activity": s["activity"], "title": s["title"], "description": s["description"], "acceptance": s["acceptance"]} for s in i.get("stories", [])],
+                "evidence": [{"id": e["id"], "source": e["source"], "text": e["text"][:300]} for e in evidence[:12]],
+            }
+            text = _ask_text(system, json.dumps(payload), tokens)
+            if text:
+                body = docgen.harden_html(text) if kind == "prototype" else _clean_citations(text, {e["id"] for e in evidence})
+                return title, body, "claude"
+        except Exception as exc:
+            print(f"[groundwork] Claude {kind} failed, using the template: {exc}")
+    body = {"prd": lambda: docgen.prd_markdown(i, evidence, product), "launch": lambda: docgen.launch_markdown(i, product),
+            "prototype": lambda: docgen.prototype_html(i)}[kind]()
+    return title, body, "offline"
+
+
+# ---------------------------------------------------------------- insights digest
+
+INSIGHTS_SYSTEM = (
+    "You are a product discovery analyst reviewing a workspace snapshot. Return ONLY a JSON array of at most 5 findings a product "
+    "manager could act on this week. Each: {\"title\": under 12 words, \"detail\": 1 to 2 sentences saying what you see and what to "
+    "do about it, \"kind\": \"risk\" | \"opportunity\" | \"gap\", \"evidence_ids\": [ids the finding rests on]}. Use only facts in the "
+    "snapshot and cite only evidence ids that appear in it (written 'evidence #12'). Prefer specific findings over general advice: "
+    "weak sources, one problem dominating, work with no evidence, shipped work never measured, themes with nothing planned. "
+    "Do not use em dashes."
+)
+
+
+def generate_digest(digest: str) -> tuple[list[dict], str]:
+    """Findings written from a workspace snapshot. Returns ([], "offline") when Claude is unavailable or says nothing usable."""
+    if not ai_enabled():
+        return [], "offline"
+    valid = {int(x) for x in re.findall(r"evidence #(\d+)", digest)}
+    try:
+        data = _ask(INSIGHTS_SYSTEM, digest, max_tokens=1500)
+    except Exception as exc:
+        print(f"[groundwork] Claude insights failed, using the rule-based digest: {exc}")
+        return [], "offline"
+    items = []
+    for it in data if isinstance(data, list) else []:
+        if not isinstance(it, dict) or not str(it.get("title", "")).strip():
+            continue
+        ids = []
+        for x in it.get("evidence_ids") or []:
+            try:
+                if int(x) in valid and int(x) not in ids:
+                    ids.append(int(x))
+            except (TypeError, ValueError):
+                pass
+        kind = it.get("kind") if it.get("kind") in ("risk", "opportunity", "gap") else "gap"
+        items.append({"title": str(it["title"]).strip()[:120], "detail": str(it.get("detail", "")).strip()[:400], "kind": kind, "evidence_ids": ids})
+    return items[:5], "claude" if items else "offline"
 
 
 # ---------------------------------------------------------------- Ask Velo

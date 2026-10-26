@@ -62,12 +62,27 @@ Linear needs a personal API key, Jira an email plus API token (site must be `*.a
 
 **Listed as coming soon:** Asana, GitHub Issues; Dovetail, Intercom, Gong, Fathom, Typeform; Gmail, Outlook, Slack. A new tool is one class in `app/integrations/` implementing `Integration` (see `base.py`) and one line in `catalog.py`. Trackers implement `connect`, `push_initiative`, `pull_status` and optionally `verify_webhook` and `parse_event`; importers implement `import_evidence`.
 
+## Working with evidence
+
+- **Automatic grouping.** New evidence (typed, uploaded or imported) joins the closest problem, or forms a new one once enough has piled up. Uses Claude when `ANTHROPIC_API_KEY` is set, otherwise a TF-IDF match with a similarity floor. Turn off under **Team > Workspace settings**.
+- **Priorities.** Themes carry a priority; the Strategy view shows each problem's score as its parts (evidence, customers, recency) and a ranked "build next" list.
+- **Out-of-date briefs.** If evidence or the spec changes after an agent or tracker last received it, the initiative is flagged.
+- **Uploads.** PDF, Word (.docx) and Markdown/text files become evidence or a product source. Files are size, page and decompression limited and parsed as untrusted.
+- **Documents.** PRD, launch plan and HTML prototype per initiative. Prototypes are stored sanitised with a strict CSP and only shown in a sandboxed iframe, never served as a page.
+- **Digest.** Findings such as stale briefs and what to build next, on demand or weekly via the scheduled run (**Team > Workspace settings**).
+- **Onboarding.** New workspaces get a short guided setup that can load a demo.
+- **AI credits.** `GROUNDWORK_AI_CREDITS` sets a monthly per-workspace limit (empty = unlimited). One credit is one AI action, bigger ones cost more. When used up, drafts fall back to basic offline mode. Usage shows under **Team**.
+
+## Public pages
+
+`/` landing, `/features`, `/privacy` (how the software handles data; it is not a legal policy, add your own before launch), `/login`, `/signup`.
+
 ## Agents (MCP)
 
     python mcp_server.py            # stdio
     python mcp_server.py --http     # http on port 8765
 
-The Hand off tab shows a ready-made `claude mcp add` command containing your token. The agent acts as you in that workspace, with your role. Tools: `list_initiatives`, `list_problems`, `get_initiative_context`, `get_product_context`, `get_evidence`, `add_evidence`, `update_status`, `report_outcome`, `list_integrations`, `push_initiative`. It reads `DATABASE_URL` from the project's `.env`. Rotate a leaked token from the Hand off tab.
+The Hand off tab shows a ready-made `claude mcp add` command containing your token. The agent acts as you in that workspace, with your role. Tools: `list_initiatives`, `list_problems`, `get_initiative_context`, `get_product_context`, `get_evidence`, `add_evidence`, `update_status`, `report_outcome`, `list_integrations`, `push_initiative`, `whats_changed`. Agent reads, writes and denied attempts are recorded and shown on each initiative. It reads `DATABASE_URL` from the project's `.env`. Rotate a leaked token from the Hand off tab.
 
 ## Operations
 

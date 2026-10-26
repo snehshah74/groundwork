@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Features: Groundwork</title>
+<meta name="description" content="Everything Groundwork does, grouped by decide, hand off and close the loop.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23074ce0'/%3E%3Cpath d='M9 24l5-16h3l-5 16zM15 24l5-16h3l-5 16z' fill='white'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Host+Grotesk:wght@500;600;700&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="mark" viewBox="0 0 32 32"><path d="M3 29L11 3h5L8 29zM12 29L20 3h5l-8 26zM21 29L29 3h3l-8 26z" fill="currentColor"/></symbol>
+  </defs>
+</svg>
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="logo" href="/" aria-label="Groundwork home"><svg style="color:var(--dp-color-accent)" aria-hidden="true"><use href="#mark"/></svg>Groundwork</a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="/features">Features</a>
+      <a href="/#how">How it works</a>
+      <a href="/#pricing">Pricing</a>
+      <a href="/#faq">FAQ</a>
+      <span class="nav-cta" id="nav-cta">
+        <a class="btn sm" href="/login">Log in</a>
+        <a class="btn sm primary" href="/signup">Start free</a>
+      </span>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+<div class="wrap"><div class="page-head"><h1>What Groundwork does</h1>
+<p>Everything in the product, grouped by the job it does: decide what to build, hand it to your tools, and learn whether it worked.</p></div></div>
+<section id="decide" class="wrap"><div class="doc-grid"><h2>Decide what to build<small>Bring evidence in, let it group itself, and see why one problem outranks another.</small></h2><dl><div><dt>Evidence from anywhere</dt><dd>Paste notes, upload PDF or Word files, or import tickets from Zendesk. Uploaded files are size and page limited and read as untrusted input.</dd></div><div><dt>Automatic grouping</dt><dd>New evidence joins the closest problem, or forms a new one once enough has piled up. With an Anthropic key it uses Claude; without one it falls back to a plain keyword match. You can turn it off.</dd></div><div><dt>Transparent priorities</dt><dd>Each problem shows the pieces of its score: how much evidence, how many customers, how recent. No hidden weighting.</dd></div><div><dt>Out-of-date warnings</dt><dd>When new evidence arrives after a brief was written, the brief is marked as out of date so nobody builds from stale context.</dd></div><div><dt>Specs and plans</dt><dd>Draft a PRD, a launch plan or a clickable prototype from an initiative. Prototypes only ever render inside a sandboxed frame.</dd></div><div><dt>Weekly digest</dt><dd>A short list of findings about the workspace, such as stale briefs and what to build next. Uses one AI credit.</dd></div></dl></div></section>
+<section id="handoff" class="wrap"><div class="doc-grid"><h2>Hand it to your tools<small>Work leaves Groundwork as tickets and as context an agent can read.</small></h2><dl><div><dt>Linear, Jira and Trello</dt><dd>Push an initiative as an issue or card. Status flows back, and only forward: a tracker never moves work backwards in Groundwork.</dd></div><div><dt>MCP server</dt><dd>11 tools let a coding agent read initiatives, problems and evidence, add evidence, update status and report outcomes. Each person has their own token and their role is enforced.</dd></div><div><dt>Webhooks and scheduled sync</dt><dd>Signed webhooks are checked for authenticity and replays. A scheduled job pulls status and imports new evidence.</dd></div><div><dt>Team and roles</dt><dd>Owner, admin, member and viewer. Invites are single-use, tied to one email address, and expire after 7 days.</dd></div></dl></div></section>
+<section id="loop" class="wrap"><div class="doc-grid"><h2>Close the loop<small>Say what you expected, then check what happened.</small></h2><dl><div><dt>Outcomes</dt><dd>Record the result of shipped work against the problem it was meant to solve.</dd></div><div><dt>Agent activity</dt><dd>See what agents read and changed, including attempts that were denied.</dd></div><div><dt>Governance flags</dt><dd>Spot initiatives with no evidence behind them or no owner.</dd></div><div><dt>Your data stays yours</dt><dd>Export everything as JSON, delete your account, and read exactly how data is handled on the privacy page.</dd></div></dl></div></section>
+<section class="wrap" style="padding-bottom:56px"><div class="callout"><b>Not built yet:</b> Asana and GitHub trackers, more discovery importers (Dovetail, Intercom, Gong and others), SAML, invite emails and billing.</div>
+<p style="margin-top:20px"><a class="btn primary" href="/signup">Start free</a></p></section>
+<div class="on-field"><footer class="site-foot">
+      <div class="wrap">
+        <div><a class="logo" href="/"><svg style="color:#6f98ff" aria-hidden="true"><use href="#mark"/></svg>Groundwork</a><p>An evidence-to-code workspace for product teams.</p></div>
+        <div><h4>Product</h4><ul><li><a href="/features">Features</a></li><li><a href="/#how">How it works</a></li><li><a href="/#pricing">Pricing</a></li></ul></div>
+        <div><h4>Help</h4><ul><li><a href="/#faq">FAQ</a></li><li><a href="/privacy">Data and privacy</a></li></ul></div>
+        <div><h4>Account</h4><ul><li><a href="/login">Log in</a></li><li><a href="/signup">Sign up</a></li></ul></div>
+      </div>
+    </footer></div>
+</main>
+<script src="/static/site.js"></script>
+</body>
+</html>

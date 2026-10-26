@@ -5,7 +5,7 @@ import json
 import secrets
 from dataclasses import asdict
 
-from .. import analysis, core, db
+from .. import ai, analysis, core, db, insights
 from . import catalog, crypto
 from .base import Integration, IntegrationError, Link, next_status
 
@@ -238,7 +238,7 @@ def import_now(provider: str) -> dict:
 
 def run_scheduled() -> dict:
     """Sync trackers and import from discovery tools in every workspace. One failing connection never stops the rest."""
-    out = {"workspaces": 0, "synced": 0, "imported": 0, "errors": 0}
+    out = {"workspaces": 0, "synced": 0, "imported": 0, "insights": 0, "errors": 0}
     for ws in db.rows("SELECT id FROM workspaces ORDER BY id"):
         schema = db.schema_name(ws["id"])
         core.init_workspace(schema)
@@ -262,6 +262,12 @@ def run_scheduled() -> dict:
                     log(row["provider"], "pull", False, f"Scheduled run failed: {e}")
                 except Exception:
                     pass
+        try:    # the weekly AI digest, for workspaces that switched it on
+            if core.get_setting("auto_insights", "0") == "1" and ai.ai_enabled() and insights.due():
+                insights.generate()
+                out["insights"] += 1
+        except Exception:
+            out["errors"] += 1
     db.use_schema(None)
     return out
 

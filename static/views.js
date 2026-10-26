@@ -203,7 +203,7 @@ document.addEventListener('keydown', e => {
 
 /* ================= initiative detail ================= */
 const isStale = i => i.context && i.context.stale && !['shipped', 'measured'].includes(i.status);
-const TABS = [['spec', 'Spec'], ['stories', 'Story map'], ['trace', 'Trace'], ['handoff', 'Hand off'], ['outcome', 'Outcome']];
+const TABS = [['spec', 'Spec'], ['stories', 'Story map'], ['docs', 'Documents'], ['trace', 'Trace'], ['handoff', 'Hand off'], ['outcome', 'Outcome']];
 
 function jag(seed) {
   const pts = [];
@@ -283,6 +283,8 @@ G.views.initiative = async r => {
         ${i.evidence.map(e => `<div class="quote"><small>${esc(e.source)} #${e.id}</small>${esc(e.text)}</div>`).join('')}</div></div>`;
   } else if (tab === 'stories') {
     body = storyMapHTML(i);
+  } else if (tab === 'docs') {
+    body = await docsTab(i);
   } else if (tab === 'trace') {
     body = `<p class="sub" style="max-width:62ch;margin-top:0">Read from the bottom up: what customers said, the problem it revealed, the theme it serves, the initiative, the stories, the hand-off, and the measured result. Hatched layers are missing.</p>${traceHTML(i)}`;
   } else if (tab === 'handoff') {

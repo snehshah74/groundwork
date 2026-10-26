@@ -67,7 +67,9 @@ G.views.team = async () => {
       One credit is one AI action; larger ones such as prototypes cost more. When credits run out, drafts fall back to basic mode.</p></div>`;
   const prefs = `${usageBox}<h2 class="group-title">Workspace settings</h2><div class="panel">
     <label class="switch"><input type="checkbox" data-change="setting-auto" ${settings.auto_analyze ? 'checked' : ''} ${admin ? '' : 'disabled'}>
-      <span><b>Group new evidence automatically</b><br><span class="small muted">When evidence arrives, from you, an upload or an integration, it joins the matching problem, or forms a new one once enough has piled up. Turn off to group by hand.</span></span></label></div>`;
+      <span><b>Group new evidence automatically</b><br><span class="small muted">When evidence arrives, from you, an upload or an integration, it joins the matching problem, or forms a new one once enough has piled up. Turn off to group by hand.</span></span></label>
+    <label class="switch" style="margin-top:14px"><input type="checkbox" data-change="setting-insights" ${settings.auto_insights ? 'checked' : ''} ${admin ? '' : 'disabled'}>
+      <span><b>Write a digest every week</b><br><span class="small muted">When AI is on, the scheduled job writes a short list of findings about the workspace each week. It uses one AI credit.</span></span></label></div>`;
 
   const account = `<h2 class="group-title">Your account</h2><div class="danger-zone"><div><b>Delete my account</b>
     <div class="small muted">Removes your login and any workspace where you are the only member. Workspaces you share with others stay, and you must make someone else an owner first.</div></div>
@@ -113,6 +115,9 @@ Object.assign(G.actions, {
 });
 G.changes['setting-auto'] = async t => {
   try { await api('/settings', { method: 'PUT', body: { auto_analyze: t.checked } }); toast(t.checked ? 'Automatic grouping is on' : 'Automatic grouping is off'); } catch (e) { toast(e.message); t.checked = !t.checked; }
+};
+G.changes['setting-insights'] = async t => {
+  try { await api('/settings', { method: 'PUT', body: { auto_insights: t.checked } }); toast(t.checked ? 'Weekly digest is on' : 'Weekly digest is off'); } catch (e) { toast(e.message); t.checked = !t.checked; }
 };
 G.changes['member-role'] = async t => {
   try { await api('/team/members/' + t.dataset.id, { method: 'PATCH', body: { role: t.value } }); toast('Role updated'); } catch (e) { toast(e.message); }

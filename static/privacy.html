@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data and privacy: Groundwork</title>
+<meta name="description" content="How Groundwork handles your data, in plain language.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23074ce0'/%3E%3Cpath d='M9 24l5-16h3l-5 16zM15 24l5-16h3l-5 16z' fill='white'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Host+Grotesk:wght@500;600;700&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/site.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="mark" viewBox="0 0 32 32"><path d="M3 29L11 3h5L8 29zM12 29L20 3h5l-8 26zM21 29L29 3h3l-8 26z" fill="currentColor"/></symbol>
+  </defs>
+</svg>
+
+<header class="site-head">
+  <div class="wrap">
+    <a class="logo" href="/" aria-label="Groundwork home"><svg style="color:var(--dp-color-accent)" aria-hidden="true"><use href="#mark"/></svg>Groundwork</a>
+    <nav class="site-nav" aria-label="Main">
+      <a href="/features">Features</a>
+      <a href="/#how">How it works</a>
+      <a href="/#pricing">Pricing</a>
+      <a href="/#faq">FAQ</a>
+      <span class="nav-cta" id="nav-cta">
+        <a class="btn sm" href="/login">Log in</a>
+        <a class="btn sm primary" href="/signup">Start free</a>
+      </span>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+<div class="wrap"><div class="page-head"><h1>Data and privacy</h1>
+<p>A plain description of how the software handles data. This is not a legal policy.</p></div></div>
+<section class="wrap" style="padding-bottom:56px"><div class="prose">
+<h2>What is stored</h2><p>Your email, a hashed password if you use email sign-in, and the content you add: evidence, problems, initiatives, documents and connection settings. Each workspace lives in its own database schema.</p>
+<h2>Sign-in</h2><p>Sign-in goes through Supabase Auth (Google, Microsoft or email). Groundwork verifies the result and keeps its own HttpOnly session cookie. Passwords are never stored in plain text.</p>
+<h2>Integration credentials</h2><p>Tokens for Linear, Jira, Trello and Zendesk are encrypted before they are saved. Customer details in imported tickets are scrubbed of obvious personal data.</p>
+<h2>AI</h2><p>When AI is on, the text of the evidence or initiative being worked on is sent to Anthropic to produce the draft. When it is off, nothing is sent and basic offline drafts are used.</p>
+<h2>Third-party requests from this site</h2><p>Pages load fonts from Google Fonts and the sign-in pages load a script from jsDelivr. Those providers see your IP address.</p>
+<h2>Your controls</h2><p>Owners can export all workspace data as JSON or delete the workspace. Anyone can delete their own account. Activity is recorded in an audit log that admins can read.</p>
+<p class="small">Questions or a deletion request you cannot do yourself: contact the person who runs this deployment.</p>
+</div></section>
+<div class="on-field"><footer class="site-foot">
+      <div class="wrap">
+        <div><a class="logo" href="/"><svg style="color:#6f98ff" aria-hidden="true"><use href="#mark"/></svg>Groundwork</a><p>An evidence-to-code workspace for product teams.</p></div>
+        <div><h4>Product</h4><ul><li><a href="/features">Features</a></li><li><a href="/#how">How it works</a></li><li><a href="/#pricing">Pricing</a></li></ul></div>
+        <div><h4>Help</h4><ul><li><a href="/#faq">FAQ</a></li><li><a href="/privacy">Data and privacy</a></li></ul></div>
+        <div><h4>Account</h4><ul><li><a href="/login">Log in</a></li><li><a href="/signup">Sign up</a></li></ul></div>
+      </div>
+    </footer></div>
+</main>
+<script src="/static/site.js"></script>
+</body>
+</html>

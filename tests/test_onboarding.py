@@ -20,4 +20,4 @@ def test_setting_one_thing_does_not_reset_another(client):
     owner = signup(client, "o@x.com")
     owner.put("/api/settings", json={"auto_analyze": False})
     s = owner.put("/api/settings", json={"onboarded": True}).json()
-    assert s == {"auto_analyze": False, "onboarded": True}
+    assert s == {"auto_analyze": False, "auto_insights": False, "onboarded": True}

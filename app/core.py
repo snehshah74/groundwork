@@ -152,6 +152,32 @@ MIGRATIONS: list[tuple[int, str, str]] = [
         );
         CREATE INDEX IF NOT EXISTS agent_events_initiative ON agent_events (initiative_id, id DESC);
     """),
+    (7, "initiative documents", """
+        CREATE TABLE IF NOT EXISTS documents (
+            id BIGSERIAL PRIMARY KEY,
+            initiative_id BIGINT NOT NULL REFERENCES initiatives(id) ON DELETE CASCADE,
+            kind TEXT NOT NULL,
+            title TEXT NOT NULL,
+            body TEXT NOT NULL,
+            mode TEXT NOT NULL DEFAULT 'offline',
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS documents_initiative ON documents (initiative_id, kind, id DESC);
+    """),
+    (8, "AI insights digest", """
+        CREATE TABLE IF NOT EXISTS insights (
+            id BIGSERIAL PRIMARY KEY,
+            run_id BIGINT NOT NULL,
+            mode TEXT NOT NULL DEFAULT 'offline',
+            title TEXT NOT NULL,
+            detail TEXT NOT NULL DEFAULT '',
+            kind TEXT NOT NULL DEFAULT 'gap',
+            evidence_ids TEXT NOT NULL DEFAULT '[]',
+            dismissed BOOLEAN NOT NULL DEFAULT FALSE,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS insights_run ON insights (run_id);
+    """),
 ]
 
 _ready: set[str] = set()
@@ -616,6 +642,66 @@ def delete_story(sid: int) -> bool:
         return gone
 
 
+# ---------- insights digest ----------
+
+def save_insight_run(items: list[dict], mode: str) -> dict:
+    """Store one digest as a new run. Older runs are kept for a short while, then dropped."""
+    with conn() as c:
+        run_id = c.execute("SELECT COALESCE(MAX(run_id), 0) + 1 AS n FROM insights").fetchone()["n"]
+        c.execute("DELETE FROM insights WHERE run_id <= ?", (run_id - 4,))
+        for it in items:
+            c.execute("INSERT INTO insights(run_id, mode, title, detail, kind, evidence_ids, created_at) VALUES (?,?,?,?,?,?,?)",
+                      (run_id, mode, it["title"], it.get("detail", ""), it.get("kind", "gap"), json.dumps(it.get("evidence_ids", [])), now()))
+    return latest_insights()
+
+
+def latest_insights() -> dict:
+    run = one("SELECT run_id AS id, mode, MAX(created_at) AS created_at FROM insights WHERE run_id = (SELECT MAX(run_id) FROM insights) GROUP BY run_id, mode")
+    if not run:
+        return {"run": None, "items": []}
+    items = rows("SELECT id, title, detail, kind, evidence_ids FROM insights WHERE run_id=? AND NOT dismissed ORDER BY id", (run["id"],))
+    for it in items:
+        it["evidence_ids"] = _loads(it["evidence_ids"], [])
+    return {"run": run, "items": items}
+
+
+def dismiss_insight(iid: int) -> bool:
+    with conn() as c:
+        return c.execute("UPDATE insights SET dismissed=TRUE WHERE id=?", (iid,)).rowcount > 0
+
+
+def last_insight_at() -> str | None:
+    return (one("SELECT MAX(created_at) AS t FROM insights") or {}).get("t")
+
+
+# ---------- initiative documents ----------
+
+KEEP_VERSIONS = 5
+
+
+def save_document(iid: int, kind: str, title: str, body: str, mode: str) -> dict:
+    with conn() as c:
+        row = c.execute("INSERT INTO documents(initiative_id, kind, title, body, mode, created_at) VALUES (?,?,?,?,?,?) RETURNING id",
+                        (iid, kind, title, body, mode, now())).fetchone()
+        c.execute("DELETE FROM documents WHERE initiative_id=? AND kind=? AND id NOT IN "
+                  "(SELECT id FROM documents WHERE initiative_id=? AND kind=? ORDER BY id DESC LIMIT ?)", (iid, kind, iid, kind, KEEP_VERSIONS))
+    return get_document(row["id"])
+
+
+def get_document(did: int) -> dict | None:
+    return one("SELECT * FROM documents WHERE id=?", (did,))
+
+
+def latest_documents(iid: int) -> list[dict]:
+    return rows("SELECT DISTINCT ON (kind) * FROM documents WHERE initiative_id=? ORDER BY kind, id DESC", (iid,))
+
+
+def update_document_body(did: int, body: str) -> dict | None:
+    with conn() as c:
+        c.execute("UPDATE documents SET body=? WHERE id=?", (body, did))
+    return get_document(did)
+
+
 # ---------- governance: what agents did, against the spec and the outcome ----------
 
 def record_agent_event(initiative_id: int | None, actor: str, tool: str, detail: str) -> None:
@@ -774,7 +860,7 @@ def release_lock(name: str) -> None:
 
 # ---------- export ----------
 
-EXPORT_TABLES = ["themes", "problems", "evidence", "initiatives", "stories", "dispatches", "outcomes", "sync_links"]
+EXPORT_TABLES = ["themes", "problems", "evidence", "initiatives", "stories", "dispatches", "outcomes", "sync_links", "documents"]
 
 
 def export_workspace() -> dict:

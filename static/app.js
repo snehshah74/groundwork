@@ -190,6 +190,8 @@ Object.assign(G.actions, {
     const r = await api('/analyze', { method: 'POST', body: { reanalyze: true } });
     toast(`${plural(r.problems_created, 'problem')} found`); go('#/problems');
   }),
+  'gen-digest': t => busy(t, 'Reading your workspace...', async () => { await api('/insights/generate', { method: 'POST' }); render(); }),
+  'dismiss-digest': async t => { await api(`/insights/${t.dataset.id}/dismiss`, { method: 'POST' }); render(); },
   insight: async (t) => {
     const view = t.dataset.view; const tg = JSON.parse(t.dataset.target || '{}');
     if (tg.action === 'analyze') return G.actions.analyze(t);
@@ -208,8 +210,22 @@ const INSIGHT_ICON = {
 const ACT_COLOR = { initiative: 'var(--c-initiative)', dispatch: 'var(--c-story)', outcome: 'var(--c-outcome)', problem: 'var(--c-problem)' };
 const actHref = a => a.kind === 'problem' ? `#/problems/${a.ref_id}` : `#/initiative/${a.ref_id}/trace`;
 
+const KIND_TAG = { risk: ['stale', 'Risk'], opportunity: ['outcome', 'Opportunity'], gap: ['muted', 'Gap'] };
+
+function digestHTML(dig) {
+  const ai = G.status && G.status.ai_mode === 'claude';
+  const head = `<div class="spread"><div><h2 class="section-title" style="margin:0">Digest</h2>
+      <p class="small muted" style="margin:2px 0 0">${dig.run ? `${dig.run.mode === 'claude' ? 'Written by Claude' : 'Basic findings'}, ${ago(dig.run.created_at)}` : 'A few specific findings about your workspace, written on request or weekly.'}</p></div>
+    <button class="btn small ${dig.run ? '' : 'primary'}" data-act="gen-digest">${dig.run ? 'Refresh' : 'Write a digest'}${ai ? ' (1 credit)' : ''}</button></div>`;
+  const items = dig.items.map(i => `<div class="insight" style="grid-template-columns:auto 1fr auto">
+      <span class="tag ${KIND_TAG[i.kind][0]}">${KIND_TAG[i.kind][1]}</span>
+      <div><h3>${esc(i.title)}</h3><p>${esc(i.detail)}</p>${i.evidence_ids.length ? `<p class="small">${i.evidence_ids.map(id => `<a class="cite" href="#/evidence" title="Evidence #${id}">#${id}</a>`).join(' ')}</p>` : ''}</div>
+      <button class="icon-btn" data-act="dismiss-digest" data-id="${i.id}" aria-label="Dismiss: ${esc(i.title)}">&#10005;</button></div>`).join('');
+  return `<section style="margin-top:30px">${head}<div class="rows" style="margin-top:8px">${items || (dig.run ? '<p class="muted small" style="padding:12px 4px">Everything in this digest has been dismissed.</p>' : '')}</div></section>`;
+}
+
 G.views.home = async () => {
-  const d = await api('/home'); const s = d.stats; const p = d.product;
+  const [d, dig] = await Promise.all([api('/home'), api('/insights')]); const s = d.stats; const p = d.product;
   if (!G.wizChecked && ['owner', 'admin'].includes(G.me.workspace.role) && s.evidence === 0 && !p.name) {
     G.wizChecked = true;   // offered once per page load, so "Skip setup" and the back button never trap anyone
     if (!(await api('/settings')).onboarded) { go('#/welcome'); return ''; }
@@ -236,7 +252,7 @@ G.views.home = async () => {
     : `<p class="muted">Activity shows up here once you create initiatives.</p>`;
   return head + `<nav class="chain" aria-label="Pipeline summary">${chain.map(c => `<a class="${c[0]}" href="${c[3]}"><b>${c[1]}</b><span>${esc(c[2])}</span></a>`).join('')}</nav>
     <div class="two"><section><h2 class="section-title">What Velo suggests</h2><div class="rows">${insights}</div></section>
-    <section class="activity"><h2 class="section-title">Recent activity</h2>${act}</section></div>`;
+    <section class="activity"><h2 class="section-title">Recent activity</h2>${act}</section></div>${digestHTML(dig)}`;
 };
 
 /* ---------- canvas ---------- */

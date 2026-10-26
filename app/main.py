@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from starlette.concurrency import run_in_threadpool
 
-from . import ai, analysis, auth, core, db, ingest, teams, usage
+from . import ai, analysis, auth, core, db, docgen, ingest, insights, teams, usage
 from .integrations import service as integrations
 from .integrations.base import IntegrationError
 from .seed_data import SEED_EVIDENCE, SEED_PRODUCT
@@ -98,8 +98,13 @@ class InviteIn(BaseModel):
     role: str = "member"
 
 
+class DocumentPatch(BaseModel):
+    body: str
+
+
 class SettingsPatch(BaseModel):
     auto_analyze: bool | None = None
+    auto_insights: bool | None = None
     onboarded: bool | None = None
 
 
@@ -226,6 +231,16 @@ def _page(name: str) -> FileResponse:
 
 def _session_user(request: Request) -> dict | None:
     return auth.user_by_session(request.cookies.get(auth.COOKIE))
+
+
+@app.get("/features")
+def features_page():
+    return _page("features.html")
+
+
+@app.get("/privacy")
+def privacy_page():
+    return _page("privacy.html")
 
 
 @app.get("/")
@@ -483,6 +498,57 @@ def get_priorities():
     return core.priorities()
 
 
+@api.post("/initiatives/{iid}/documents/{kind}")
+def generate_document(iid: int, kind: str):
+    """Write a PRD, a launch plan or a prototype for an initiative. Each call keeps a new version."""
+    if kind not in docgen.KINDS:
+        raise HTTPException(404, "Unknown document type")
+    i = core.get_initiative(iid)
+    if not i:
+        raise HTTPException(404, "Initiative not found")
+    i["problem"] = core.get_problem(i["problem_id"])
+    title, body, mode = ai.generate_document(kind, i, i["evidence"], core.get_product())
+    return core.save_document(iid, kind, title, body, mode)
+
+
+@api.get("/initiatives/{iid}/documents")
+def list_documents(iid: int):
+    if not core.one("SELECT 1 AS x FROM initiatives WHERE id=?", (iid,)):
+        raise HTTPException(404, "Initiative not found")
+    return core.latest_documents(iid)
+
+
+@api.get("/documents/{did}")
+def get_document(did: int):
+    d = core.get_document(did)
+    if not d:
+        raise HTTPException(404, "Document not found")
+    return d
+
+
+@api.put("/documents/{did}")
+def edit_document(did: int, body: DocumentPatch):
+    d = core.get_document(did)
+    if not d:
+        raise HTTPException(404, "Document not found")
+    if d["kind"] == "prototype":
+        raise HTTPException(400, "Prototypes are regenerated, not edited by hand.")
+    if len(body.body.encode()) > docgen.MAX_HTML_BYTES:
+        raise HTTPException(400, "That document is too long.")
+    return core.update_document_body(did, body.body)
+
+
+@api.get("/documents/{did}/download")
+def download_document(did: int):
+    """As a file, never as a web page: model-written HTML must not run on this site's origin."""
+    d = core.get_document(did)
+    if not d:
+        raise HTTPException(404, "Document not found")
+    ext, ctype = ("html", "application/octet-stream") if d["kind"] == "prototype" else ("md", "text/markdown; charset=utf-8")
+    return Response(d["body"], media_type=ctype, headers={"Content-Disposition": f'attachment; filename="{d["kind"]}-{d["initiative_id"]}-{d["id"]}.{ext}"',
+                                                          "X-Content-Type-Options": "nosniff"})
+
+
 @api.get("/governance")
 def get_governance():
     return core.governance()
@@ -495,6 +561,23 @@ def initiative_activity(iid: int):
     return core.initiative_activity(iid)
 
 
+@api.get("/insights")
+def get_insights():
+    return core.latest_insights()
+
+
+@api.post("/insights/generate")
+def generate_insights():
+    return insights.generate()
+
+
+@api.post("/insights/{iid}/dismiss")
+def dismiss_insight(iid: int):
+    if not core.dismiss_insight(iid):
+        raise HTTPException(404, "Insight not found")
+    return {"dismissed": iid}
+
+
 @api.get("/usage")
 def get_usage():
     return usage.summary()
@@ -502,7 +585,8 @@ def get_usage():
 
 @api.get("/settings")
 def get_settings():
-    return {"auto_analyze": analysis.enabled(), "onboarded": core.get_setting("onboarded", "0") == "1"}
+    return {"auto_analyze": analysis.enabled(), "auto_insights": core.get_setting("auto_insights", "0") == "1",
+            "onboarded": core.get_setting("onboarded", "0") == "1"}
 
 
 @api.put("/settings")
@@ -512,6 +596,9 @@ def put_settings(body: SettingsPatch, ctx: dict = Depends(needs("admin"))):
         teams.audit(ctx["ws"]["id"], ctx["user"], "workspace.settings", f"automatic analysis {'on' if body.auto_analyze else 'off'}")
         if body.auto_analyze:
             analysis.auto_analyze()       # catch up on anything that arrived while it was off
+    if body.auto_insights is not None:
+        core.set_setting("auto_insights", "1" if body.auto_insights else "0")
+        teams.audit(ctx["ws"]["id"], ctx["user"], "workspace.settings", f"weekly AI digest {'on' if body.auto_insights else 'off'}")
     if body.onboarded is not None:
         core.set_setting("onboarded", "1" if body.onboarded else "0")
     return get_settings()

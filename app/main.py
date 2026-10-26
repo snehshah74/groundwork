@@ -8,14 +8,14 @@ from pathlib import Path
 import hmac
 import os
 
-from fastapi import APIRouter, Body, Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from starlette.concurrency import run_in_threadpool
 
-from . import ai, auth, core, db, teams
+from . import ai, analysis, auth, core, db, teams
 from .integrations import service as integrations
 from .integrations.base import IntegrationError
 from .seed_data import SEED_EVIDENCE, SEED_PRODUCT
@@ -98,6 +98,14 @@ class InviteIn(BaseModel):
     role: str = "member"
 
 
+class SettingsPatch(BaseModel):
+    auto_analyze: bool | None = None
+
+
+class EvidenceMove(BaseModel):
+    problem_id: int | None = None
+
+
 class DeleteAccountIn(BaseModel):
     confirm: str
 
@@ -149,6 +157,7 @@ class ThemeIn(BaseModel):
 class ThemePatch(BaseModel):
     title: str | None = None
     description: str | None = None
+    priority: int | None = None
 
 
 class ProductIn(BaseModel):
@@ -467,6 +476,26 @@ def home():
 
 
 # ---------------------------------------------------------------- product canvas
+@api.get("/priorities")
+def get_priorities():
+    return core.priorities()
+
+
+@api.get("/settings")
+def get_settings():
+    return {"auto_analyze": analysis.enabled(), "onboarded": core.get_setting("onboarded", "0") == "1"}
+
+
+@api.put("/settings")
+def put_settings(body: SettingsPatch, ctx: dict = Depends(needs("admin"))):
+    if body.auto_analyze is not None:
+        core.set_setting("auto_analyze", "1" if body.auto_analyze else "0")
+        teams.audit(ctx["ws"]["id"], ctx["user"], "workspace.settings", f"automatic analysis {'on' if body.auto_analyze else 'off'}")
+        if body.auto_analyze:
+            analysis.auto_analyze()       # catch up on anything that arrived while it was off
+    return get_settings()
+
+
 @api.get("/product")
 def get_product():
     return core.get_product()
@@ -496,11 +525,13 @@ def get_evidence():
 
 
 @api.post("/evidence")
-def post_evidence(body: EvidenceIn):
+def post_evidence(body: EvidenceIn, background: BackgroundTasks):
     try:
-        return core.add_evidence(body.text, body.source)
-    except ValueError as e:
-        _bad(e)
+        e = core.add_evidence(body.text, body.source)
+    except ValueError as err:
+        _bad(err)
+    background.add_task(analysis.auto_analyze, db.current_schema())     # after the response, so adding evidence stays instant
+    return e
 
 
 @api.delete("/evidence/{eid}")
@@ -510,13 +541,22 @@ def remove_evidence(eid: int):
     return {"deleted": eid}
 
 
-@api.post("/evidence/upload")
-async def upload_evidence(file: UploadFile = File(...)):
-    """CSV with a 'text' column (optional 'source'), or a plain text file split on blank lines."""
-    raw = (await file.read()).decode("utf-8", errors="replace")
+@api.put("/evidence/{eid}/problem")
+def move_evidence(eid: int, body: EvidenceMove):
+    """Move a piece of evidence to another problem, or out of its problem with null."""
+    if not core.one("SELECT 1 AS x FROM evidence WHERE id=?", (eid,)):
+        raise HTTPException(404, "Evidence not found")
+    if body.problem_id is not None and not core.one("SELECT 1 AS x FROM problems WHERE id=?", (body.problem_id,)):
+        raise HTTPException(404, "Problem not found")
+    core.assign_evidence([eid], body.problem_id)
+    return core.one("SELECT * FROM evidence WHERE id=?", (eid,))
+
+
+def _ingest_upload(filename: str, raw: bytes) -> int:
+    text = raw.decode("utf-8", errors="replace")
     added = 0
-    if (file.filename or "").lower().endswith(".csv"):
-        reader = csv.DictReader(io.StringIO(raw))
+    if filename.lower().endswith(".csv"):
+        reader = csv.DictReader(io.StringIO(text))
         cols = {c.lower(): c for c in (reader.fieldnames or [])}
         text_col = cols.get("text") or cols.get("feedback") or cols.get("message") or cols.get("body")
         if not text_col:
@@ -524,12 +564,21 @@ async def upload_evidence(file: UploadFile = File(...)):
         src_col = cols.get("source")
         for r in reader:
             if (r.get(text_col) or "").strip():
-                core.add_evidence(r[text_col], (r.get(src_col) if src_col else "") or file.filename or "csv")
+                core.add_evidence(r[text_col], (r.get(src_col) if src_col else "") or filename or "csv")
                 added += 1
     else:
-        for chunk in [c for c in raw.split("\n\n") if c.strip()]:
-            core.add_evidence(chunk, file.filename or "upload")
+        for chunk in [c for c in text.split("\n\n") if c.strip()]:
+            core.add_evidence(chunk, filename or "upload")
             added += 1
+    return added
+
+
+@api.post("/evidence/upload")
+async def upload_evidence(background: BackgroundTasks, file: UploadFile = File(...)):
+    """CSV with a 'text' column (optional 'source'), or a plain text file split on blank lines."""
+    raw = await file.read()
+    added = await run_in_threadpool(_ingest_upload, file.filename or "", raw)   # many inserts: keep them off the event loop
+    background.add_task(analysis.auto_analyze, db.current_schema())
     return {"added": added}
 
 
@@ -596,7 +645,7 @@ def post_theme(body: ThemeIn):
 @api.patch("/themes/{tid}")
 def patch_theme(tid: int, body: ThemePatch):
     try:
-        t = core.update_theme(tid, body.model_dump(exclude_none=True))
+        t = core.update_theme(tid, body.model_dump(exclude_unset=True))
     except ValueError as e:
         _bad(e)
     if not t:
@@ -903,8 +952,10 @@ def sync_integration(provider: str):
 
 
 @api.post("/integrations/{provider}/import")
-def import_integration(provider: str):
-    return _integration_call(integrations.import_now, provider)
+def import_integration(provider: str, background: BackgroundTasks):
+    result = _integration_call(integrations.import_now, provider)
+    background.add_task(analysis.auto_analyze, db.current_schema())
+    return result
 
 
 @api.get("/integrations/{provider}/log")

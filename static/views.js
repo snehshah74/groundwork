@@ -142,6 +142,8 @@ G.views.strategy = async () => {
       <div class="spread"><input class="bare t-title" data-change="theme-field" data-id="${t.id}" data-field="title" value="${esc(t.title)}" aria-label="Theme title">
         <button class="icon-btn" data-act="delete-theme" data-id="${t.id}" aria-label="Delete theme ${esc(t.title)}">&#10005;</button></div>
       <textarea class="bare t-desc" rows="2" data-change="theme-field" data-id="${t.id}" data-field="description" placeholder="Why this matters to the product" aria-label="Theme description">${esc(t.description)}</textarea>
+      <label class="field"><span class="small">Priority</span><select data-change="theme-priority" data-id="${t.id}">
+        <option value="">Not ranked</option>${[1, 2, 3].map(n => `<option value="${n}" ${t.priority === n ? 'selected' : ''}>${n}${n === 1 ? ' (most important)' : ''}</option>`).join('')}</select></label>
       <div class="small muted">${plural(t.problem_count, 'problem')}, ${plural(t.evidence_count, 'piece')} of evidence, ${plural(t.initiative_count, 'initiative')}</div>
       ${probs.filter(p => p.theme_id === t.id).map(miniP).join('')}
       ${inits.filter(i => i.theme_id === t.id).map(miniI).join('')}
@@ -186,7 +188,8 @@ G.views.initiatives = async () => {
         <div class="meta">${i.theme_title ? `<span class="tag theme">${esc(i.theme_title)}</span>` : ''}
           <span class="tag evidence">${plural(i.evidence_count, 'item')}</span>
           ${i.story_count ? `<span class="tag story">${plural(i.story_count, 'story', 'stories')}</span>` : ''}
-          ${i.latest_verdict ? `<span class="tag outcome">${esc(verdictLabel(i.latest_verdict))}</span>` : ''}</div></div>`).join('')}</section>`;
+          ${i.latest_verdict ? `<span class="tag outcome">${esc(verdictLabel(i.latest_verdict))}</span>` : ''}
+          ${isStale(i) ? `<span class="tag stale" title="${esc(i.context.reasons.join(', '))}">Out of date</span>` : ''}</div></div>`).join('')}</section>`;
   }).join('')}</div>`;
 };
 G.changes['theme-filter'] = t => { G.themeFilter = t.value; render(); };
@@ -199,6 +202,7 @@ document.addEventListener('keydown', e => {
 });
 
 /* ================= initiative detail ================= */
+const isStale = i => i.context && i.context.stale && !['shipped', 'measured'].includes(i.status);
 const TABS = [['spec', 'Spec'], ['stories', 'Story map'], ['trace', 'Trace'], ['handoff', 'Hand off'], ['outcome', 'Outcome']];
 
 function jag(seed) {
@@ -261,6 +265,7 @@ G.views.initiative = async r => {
   const header = `<a class="crumb" href="#/initiatives">Initiatives</a>
     <header><input class="bare title-input" data-change="init-field" data-id="${i.id}" data-field="title" value="${esc(i.title)}" aria-label="Initiative title">
     <div class="actions" style="margin-top:10px"><span class="sub">From <a href="#/problems/${i.problem_id}">${esc(i.problem_title)}</a></span>
+      ${isStale(i) ? `<a class="tag stale" href="#/initiative/${i.id}/handoff" title="${esc(i.context.reasons.join(', '))}">Out of date</a>` : ''}
       ${ilinks.filter(l => l.kind === 'initiative').map(l => `<a class="tag initiative" href="${esc(l.external_url)}" target="_blank" rel="noopener" title="${esc(l.provider)}">${esc(l.external_key)} &middot; ${esc(l.external_status)}</a>`).join('')}
       <label class="actions" style="gap:6px"><span class="muted small">Theme</span><select data-change="init-theme" data-id="${i.id}"><option value="">None</option>
       ${themes.map(t => `<option value="${t.id}" ${i.theme_id === t.id ? 'selected' : ''}>${esc(t.title)}</option>`).join('')}</select></label></div>
@@ -285,7 +290,10 @@ G.views.initiative = async r => {
     const prompt = `Implement Groundwork initiative ${i.id}. Call get_product_context, then get_initiative_context with initiative_id ${i.id}, build it story by story, and call report_outcome when it ships.`;
     const mcpCmd = `claude mcp add groundwork -e GROUNDWORK_TOKEN=${G.me.api_token} -- ${'${PWD}'}/.venv/bin/python ${'${PWD}'}/mcp_server.py`;
     G.cur.ctx = ctx; G.cur.prompt = prompt;
-    body = `<div class="spec-grid"><div class="stack">
+    const staleBanner = isStale(i) ? `<div class="banner" style="grid-column:1/-1;margin:0"><span><b>This brief is out of date.</b>
+        Since it was last sent (${ago(i.context.sent_at)}): ${esc(i.context.reasons.join(' and '))}.
+        Agents get the new version the next time they read it. Trackers need <b>Update in ...</b> below.</span></div>` : '';
+    body = `<div class="spec-grid">${staleBanner}<div class="stack">
         <div class="panel"><h2>1. Connect your agent once</h2>
           <p class="sub small">Run this once from the folder where you installed Groundwork. The token tells the agent which workspace is yours, so keep it private.</p>
           <pre class="brief" style="max-height:none">${esc(mcpCmd)}</pre>

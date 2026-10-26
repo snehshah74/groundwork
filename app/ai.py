@@ -169,6 +169,94 @@ def _cluster_from(members: list[dict], title: str, ids: list[int], total: int) -
     }
 
 
+# ---------------------------------------------------------------- incremental grouping
+
+ASSIGN_SYSTEM = (
+    "You are a product discovery analyst. You receive EXISTING customer problems and NEW customer evidence. For each new "
+    "evidence item decide whether it is clearly about one of the existing problems (assign it) or belongs to a new problem. "
+    "Return ONLY a JSON object: {\"assignments\": [{\"evidence_id\": id, \"problem_id\": id}], \"new_problems\": "
+    "[{\"title\": short problem name, \"summary\": 1-2 sentences, \"persona\": who has it, \"severity\": "
+    "\"low\"|\"medium\"|\"high\", \"evidence_ids\": [ids]}]}. A new problem needs at least 2 evidence items. Leave an item "
+    "out entirely if it fits nothing yet. Describe problems, not feature requests. Do not use em dashes."
+)
+SIMILARITY_MIN = 0.08    # offline: floor for an item to join a problem (similarities are small on short texts)
+SIMILARITY_MARGIN = 1.5  # offline: and the best match must beat the runner-up by this factor, or the item is ambiguous
+SHARED_TERMS_MIN = 2     # offline: and share at least this many distinct terms, so one common word never decides
+CLUSTER_MIN = 6          # offline: leftovers needed before new problems are formed from them
+
+
+def assign_evidence(items: list[dict], problems: list[dict], problem_texts: dict[int, str]) -> tuple[dict[int, int], list[dict], str]:
+    """Place new evidence into existing problems and/or new ones.
+    Returns ({evidence_id: problem_id}, new clusters like cluster_evidence makes, mode)."""
+    if ai_enabled():
+        try:
+            batch = items[:MAX_CLUSTER_ITEMS]
+            payload = {
+                "existing_problems": [{"id": p["id"], "title": p["title"], "summary": (p.get("summary") or "")[:200]} for p in problems[:60]],
+                "new_evidence": [{"id": e["id"], "source": e["source"], "text": e["text"][:500]} for e in batch],
+            }
+            data = _ask(ASSIGN_SYSTEM, json.dumps(payload), max_tokens=3000)
+            return (*_validate_assignment(data, {e["id"] for e in batch}, {p["id"] for p in problems}), "claude")
+        except Exception as exc:
+            print(f"[groundwork] Claude assignment failed, using offline mode: {exc}")
+    return (*_offline_assign(items, problems, problem_texts), "offline")
+
+
+def _validate_assignment(data, valid_evidence: set[int], valid_problems: set[int]) -> tuple[dict[int, int], list[dict]]:
+    if not isinstance(data, dict):
+        return {}, []
+    assigned: dict[int, int] = {}
+    for a in data.get("assignments") or []:
+        try:
+            eid, pid = int(a["evidence_id"]), int(a["problem_id"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        if eid in valid_evidence and pid in valid_problems:
+            assigned[eid] = pid
+    clusters, taken = [], set(assigned)
+    for cl in data.get("new_problems") or []:
+        try:
+            ids = [int(i) for i in cl.get("evidence_ids", []) if int(i) in valid_evidence and int(i) not in taken]
+        except (TypeError, ValueError):
+            continue
+        if len(ids) < 2 or not cl.get("title"):     # one comment is not a pattern
+            continue
+        taken.update(ids)
+        sev = cl.get("severity", "medium")
+        clusters.append({"title": str(cl["title"])[:120], "summary": str(cl.get("summary", ""))[:500], "persona": str(cl.get("persona", ""))[:120],
+                         "severity": sev if sev in ("low", "medium", "high") else "medium", "evidence_ids": ids})
+    return assigned, clusters
+
+
+def _offline_assign(items: list[dict], problems: list[dict], problem_texts: dict[int, str]) -> tuple[dict[int, int], list[dict]]:
+    assigned: dict[int, int] = {}
+    if problems:
+        import numpy as np
+        from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS, TfidfVectorizer
+        from sklearn.metrics.pairwise import cosine_similarity
+
+        corpus = [f"{p['title']} {p.get('summary') or ''} {problem_texts.get(p['id'], '')}" for p in problems] + [e["text"] for e in items]
+        try:
+            X = TfidfVectorizer(stop_words=list(ENGLISH_STOP_WORDS | _FILLER), ngram_range=(1, 2), sublinear_tf=True).fit_transform(corpus)
+            sims = cosine_similarity(X[len(problems):], X[:len(problems)])
+            for row, e in enumerate(items):
+                order = np.argsort(sims[row])[::-1]
+                best, second = float(sims[row][order[0]]), float(sims[row][order[1]]) if len(order) > 1 else 0.0
+                shared = X[len(problems) + row].multiply(X[int(order[0])]).nnz            # distinct terms (words and word pairs) in common
+                if best >= SIMILARITY_MIN and best >= SIMILARITY_MARGIN * second and shared >= SHARED_TERMS_MIN:
+                    assigned[e["id"]] = problems[int(order[0])]["id"]
+        except ValueError:      # nothing but stop words
+            pass
+    left = [e for e in items if e["id"] not in assigned]
+    clusters: list[dict] = []
+    if len(left) >= CLUSTER_MIN:
+        try:
+            clusters = _offline_cluster(left)
+        except ValueError:
+            clusters = []
+    return assigned, clusters
+
+
 # ---------------------------------------------------------------- spec
 
 SPEC_SYSTEM = (

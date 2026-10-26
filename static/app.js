@@ -80,7 +80,7 @@ function parseHash() {
   const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
   return { view: parts[0] || 'home', id: parts[1] ? +parts[1] : null, tab: parts[2] || null };
 }
-const NAV_OF = { home: 'home', canvas: 'canvas', integrations: 'integrations', team: 'team', evidence: 'evidence', problems: 'problems', strategy: 'strategy', initiatives: 'initiatives', initiative: 'initiatives' };
+const NAV_OF = { home: 'home', canvas: 'canvas', integrations: 'integrations', team: 'team', priorities: 'priorities', evidence: 'evidence', problems: 'problems', strategy: 'strategy', initiatives: 'initiatives', initiative: 'initiatives' };
 
 async function refreshRail() {
   const s = await api('/status');
@@ -204,7 +204,8 @@ const INSIGHT_ICON = {
   info: `<svg class="mark" viewBox="0 0 22 22" aria-label="Worth a look"><circle cx="11" cy="11" r="9" fill="none" stroke="var(--ink-3)" stroke-width="2"/><rect x="10" y="9.5" width="2" height="6" rx="1" fill="var(--ink-3)"/><circle cx="11" cy="6.6" r="1.2" fill="var(--ink-3)"/></svg>`,
   good: `<svg class="mark" viewBox="0 0 22 22" aria-label="Going well"><circle cx="11" cy="11" r="10" fill="var(--c-theme)"/><path d="M6.5 11.4l3.1 3.1 6-6.4" fill="none" stroke="var(--raised)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
 };
-const ACT_COLOR = { initiative: 'var(--c-initiative)', dispatch: 'var(--c-story)', outcome: 'var(--c-outcome)' };
+const ACT_COLOR = { initiative: 'var(--c-initiative)', dispatch: 'var(--c-story)', outcome: 'var(--c-outcome)', problem: 'var(--c-problem)' };
+const actHref = a => a.kind === 'problem' ? `#/problems/${a.ref_id}` : `#/initiative/${a.ref_id}/trace`;
 
 G.views.home = async () => {
   const d = await api('/home'); const s = d.stats; const p = d.product;
@@ -226,7 +227,7 @@ G.views.home = async () => {
       <div><h3>${esc(i.title)}</h3><p>${esc(i.detail)}</p></div>
       <button class="btn small" data-act="insight" data-view="${esc(i.view)}" data-target='${esc(JSON.stringify(i.target))}'>${esc(i.label)}</button></div>`).join('')
     : `<p class="muted">Nothing needs attention right now.</p>`;
-  const act = d.activity.length ? `<ul>${d.activity.map(a => `<li style="--c:${ACT_COLOR[a.kind]}"><i></i><div><a href="#/initiative/${a.ref_id}/trace">${esc(a.label)}</a><small>${ago(a.created_at)}</small></div></li>`).join('')}</ul>`
+  const act = d.activity.length ? `<ul>${d.activity.map(a => `<li style="--c:${ACT_COLOR[a.kind]}"><i></i><div><a href="${actHref(a)}">${esc(a.label)}</a><small>${ago(a.created_at)}</small></div></li>`).join('')}</ul>`
     : `<p class="muted">Activity shows up here once you create initiatives.</p>`;
   return head + `<nav class="chain" aria-label="Pipeline summary">${chain.map(c => `<a class="${c[0]}" href="${c[3]}"><b>${c[1]}</b><span>${esc(c[2])}</span></a>`).join('')}</nav>
     <div class="two"><section><h2 class="section-title">What Velo suggests</h2><div class="rows">${insights}</div></section>

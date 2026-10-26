@@ -20,6 +20,7 @@ G.views.team = async () => {
   const role = t.workspace.role;
   const admin = role === 'admin' || role === 'owner';
   const audit = admin ? await api('/team/audit') : [];
+  const settings = await api('/settings');
   const roleSelect = (m) => {
     const locked = !admin || (m.role === 'owner' && role !== 'owner');
     const opts = t.roles.filter(r => role === 'owner' || r !== 'owner');
@@ -57,11 +58,15 @@ G.views.team = async () => {
       <span class="small"><b>${esc(e.email)}</b> ${esc(AUDIT_LABEL[e.action] || e.action)} ${esc(e.detail)}</span></div>`).join('') : '<p class="muted small" style="margin:0">Nothing yet.</p>'}
       <div class="actions" style="margin-top:12px"><a class="btn small" href="/api/team/export" download>Export all workspace data (JSON)</a></div></div>` : '';
 
+  const prefs = `<h2 class="group-title">Workspace settings</h2><div class="panel">
+    <label class="switch"><input type="checkbox" data-change="setting-auto" ${settings.auto_analyze ? 'checked' : ''} ${admin ? '' : 'disabled'}>
+      <span><b>Group new evidence automatically</b><br><span class="small muted">When evidence arrives, from you, an upload or an integration, it joins the matching problem, or forms a new one once enough has piled up. Turn off to group by hand.</span></span></label></div>`;
+
   const account = `<h2 class="group-title">Your account</h2><div class="danger-zone"><div><b>Delete my account</b>
     <div class="small muted">Removes your login and any workspace where you are the only member. Workspaces you share with others stay, and you must make someone else an owner first.</div></div>
     <button class="btn danger" data-act="delete-account">Delete my account</button></div>`;
 
-  return head + `<div class="two-col"><div>${members}${activity}</div><div class="stack gap-lg">${invite}${roles}</div></div>${danger}${account}`;
+  return head + `<div class="two-col"><div>${members}${activity}</div><div class="stack gap-lg">${invite}${roles}</div></div>${prefs}${danger}${account}`;
 };
 
 Object.assign(G.actions, {
@@ -99,6 +104,9 @@ Object.assign(G.actions, {
     await api('/team/workspace', { method: 'DELETE' }); location.href = '/app#/home'; location.reload();
   },
 });
+G.changes['setting-auto'] = async t => {
+  try { await api('/settings', { method: 'PUT', body: { auto_analyze: t.checked } }); toast(t.checked ? 'Automatic grouping is on' : 'Automatic grouping is off'); } catch (e) { toast(e.message); t.checked = !t.checked; }
+};
 G.changes['member-role'] = async t => {
   try { await api('/team/members/' + t.dataset.id, { method: 'PATCH', body: { role: t.value } }); toast('Role updated'); } catch (e) { toast(e.message); }
   render();

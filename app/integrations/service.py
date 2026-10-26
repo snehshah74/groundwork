@@ -5,7 +5,7 @@ import json
 import secrets
 from dataclasses import asdict
 
-from .. import core, db
+from .. import analysis, core, db
 from . import catalog, crypto
 from .base import Integration, IntegrationError, Link, next_status
 
@@ -255,6 +255,7 @@ def run_scheduled() -> dict:
                 elif integ.meta.kind == "discovery":
                     import_now(row["provider"])
                     out["imported"] += 1
+                    analysis.auto_analyze()
             except Exception as e:      # logged per connection; the schedule keeps going
                 out["errors"] += 1
                 try:

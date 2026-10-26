@@ -8,7 +8,8 @@ from __future__ import annotations
 import csv
 import io
 import json
-from datetime import datetime, timezone
+import math
+from datetime import datetime, timedelta, timezone
 
 from . import db
 from .db import conn, one, rows, use_schema  # noqa: F401  (re-exported for the other modules)
@@ -119,6 +120,15 @@ MIGRATIONS: list[tuple[int, str, str]] = [
     (1, "baseline", SCHEMA),
     (2, "importers never duplicate evidence",
      "CREATE UNIQUE INDEX IF NOT EXISTS evidence_external_ref_uq ON evidence (external_ref) WHERE external_ref IS NOT NULL"),
+    (3, "settings and change tracking for out-of-date briefs", """
+        CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        ALTER TABLE evidence ADD COLUMN IF NOT EXISTS assigned_at TEXT;
+        ALTER TABLE problems ADD COLUMN IF NOT EXISTS evidence_changed_at TEXT;
+        ALTER TABLE initiatives ADD COLUMN IF NOT EXISTS updated_at TEXT;
+        UPDATE evidence SET assigned_at = created_at WHERE problem_id IS NOT NULL AND assigned_at IS NULL;
+        UPDATE initiatives SET updated_at = created_at WHERE updated_at IS NULL;
+    """),
+    (4, "theme priority for ranking", "ALTER TABLE themes ADD COLUMN IF NOT EXISTS priority INTEGER"),
 ]
 
 _ready: set[str] = set()
@@ -152,7 +162,7 @@ CANVAS_KEYS = [
 
 
 def now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")   # not seconds: "changed after it was sent" must be able to tell two events in one second apart
 
 
 def _loads(v, default):
@@ -214,7 +224,11 @@ def add_evidence(text: str, source: str = "note", external_ref: str | None = Non
 
 def delete_evidence(eid: int) -> bool:
     with conn() as c:
-        return c.execute("DELETE FROM evidence WHERE id=?", (eid,)).rowcount > 0
+        row = c.execute("SELECT problem_id FROM evidence WHERE id=?", (eid,)).fetchone()
+        gone = c.execute("DELETE FROM evidence WHERE id=?", (eid,)).rowcount > 0
+        if gone and row and row["problem_id"]:
+            c.execute("UPDATE problems SET evidence_changed_at=? WHERE id=?", (now(), row["problem_id"]))
+        return gone
 
 
 def list_evidence(unassigned_only: bool = False) -> list[dict]:
@@ -248,8 +262,25 @@ def save_problems(clusters: list[dict]) -> list[int]:
             pid = cur.fetchone()["id"]
             ids.append(pid)
             for eid in cl.get("evidence_ids", []):
-                c.execute("UPDATE evidence SET problem_id=? WHERE id=?", (pid, int(eid)))
+                c.execute("UPDATE evidence SET problem_id=?, assigned_at=? WHERE id=?", (pid, now(), int(eid)))
+            c.execute("UPDATE problems SET evidence_changed_at=? WHERE id=?", (now(), pid))
     return ids
+
+
+def assign_evidence(eids: list[int], problem_id: int | None) -> int:
+    """Put evidence into a problem (or take it out with None). Both the old and the new problem count as changed, so the
+    initiatives built on them can tell their briefs are out of date. Returns how many items moved."""
+    moved = 0
+    with conn() as c:
+        for eid in eids:
+            row = c.execute("SELECT problem_id FROM evidence WHERE id=?", (int(eid),)).fetchone()
+            if not row or row["problem_id"] == problem_id:
+                continue
+            c.execute("UPDATE evidence SET problem_id=?, assigned_at=? WHERE id=?", (problem_id, now() if problem_id else None, int(eid)))
+            for pid in {row["problem_id"], problem_id} - {None}:
+                c.execute("UPDATE problems SET evidence_changed_at=? WHERE id=?", (now(), pid))
+            moved += 1
+    return moved
 
 
 def update_problem(pid: int, data: dict) -> dict | None:
@@ -323,9 +354,13 @@ def create_theme(title: str, description: str = "") -> dict:
 
 
 def update_theme(tid: int, data: dict) -> dict | None:
-    allowed = {k: str(v).strip() for k, v in data.items() if k in ("title", "description")}
+    allowed: dict = {k: str(v).strip() for k, v in data.items() if k in ("title", "description") and v is not None}
     if "title" in allowed and not allowed["title"]:
         raise ValueError("Theme title is empty")
+    if "priority" in data:    # 1 is the most important; null clears it
+        if data["priority"] is not None and data["priority"] not in (1, 2, 3):
+            raise ValueError("Priority must be 1, 2 or 3, or empty")
+        allowed["priority"] = data["priority"]
     if allowed:
         sets = ", ".join(f"{k}=?" for k in allowed)
         with conn() as c:
@@ -351,6 +386,29 @@ def save_themes(themes: list[dict]) -> list[int]:
 
 # ---------- initiatives ----------
 
+def _plural(n: int, one: str, many: str) -> str:
+    return f"{n} {one if n == 1 else many}"
+
+
+def _with_context(i: dict) -> dict:
+    """Add i["context"]: when an agent or tracker last got this initiative and whether it has changed since.
+
+    "Got it" means the latest dispatch (an agent reading the brief over MCP, a copy of the brief, or a push to a tracker).
+    Never sent is not out of date: there is nothing to be behind.
+    """
+    sent_at, new_ev, changed = i.pop("sent_at", None), i.pop("new_evidence", 0) or 0, i.pop("problem_changed_at", None)
+    reasons: list[str] = []
+    if sent_at:
+        if new_ev:
+            reasons.append(f"{_plural(new_ev, 'new piece', 'new pieces')} of evidence")
+        elif changed and changed > sent_at:
+            reasons.append("evidence was removed or moved")
+        if i.get("updated_at") and i["updated_at"] > sent_at:
+            reasons.append("the spec or stories were edited")
+    i["context"] = {"sent_at": sent_at, "stale": bool(reasons), "reasons": reasons}
+    return i
+
+
 def _decode(i: dict) -> dict:
     i["out_of_scope"] = _loads(i.get("out_of_scope"), [])
     i["acceptance_criteria"] = _loads(i.get("acceptance_criteria"), [])
@@ -367,8 +425,8 @@ def create_initiative(problem_id: int, spec: dict) -> dict:
     with conn() as c:
         cur = c.execute(
             """INSERT INTO initiatives(problem_id, title, theme, theme_id, persona, problem_statement,
-               success_metric, out_of_scope, acceptance_criteria, status, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?, 'proposed', ?) RETURNING id""",
+               success_metric, out_of_scope, acceptance_criteria, status, created_at, updated_at)
+               VALUES (?,?,?,?,?,?,?,?,?, 'proposed', ?, ?) RETURNING id""",
             (
                 problem_id,
                 spec["title"],
@@ -379,6 +437,7 @@ def create_initiative(problem_id: int, spec: dict) -> dict:
                 spec.get("success_metric", ""),
                 json.dumps(spec.get("out_of_scope", [])),
                 json.dumps(spec.get("acceptance_criteria", [])),
+                now(),
                 now(),
             ),
         )
@@ -397,6 +456,9 @@ def update_initiative(iid: int, data: dict) -> dict | None:
         if k in data and data[k] is not None:
             sets.append(f"{k}=?")
             args.append(json.dumps([str(x).strip() for x in data[k] if str(x).strip()]))
+    if sets:   # everything above is spec content; status and theme (below) are bookkeeping and do not date a brief
+        sets.append("updated_at=?")
+        args.append(now())
     if "theme_id" in data:
         sets.append("theme_id=?")
         args.append(data["theme_id"])
@@ -416,25 +478,33 @@ def list_initiatives() -> list[dict]:
         """SELECT i.*, p.title AS problem_title, t.title AS theme_title,
                   (SELECT COUNT(*) FROM evidence e WHERE e.problem_id=i.problem_id) AS evidence_count,
                   (SELECT COUNT(*) FROM stories s WHERE s.initiative_id=i.id) AS story_count,
-                  (SELECT verdict FROM outcomes o WHERE o.initiative_id=i.id ORDER BY o.id DESC LIMIT 1) AS latest_verdict
+                  (SELECT verdict FROM outcomes o WHERE o.initiative_id=i.id ORDER BY o.id DESC LIMIT 1) AS latest_verdict,
+                  (SELECT MAX(d.created_at) FROM dispatches d WHERE d.initiative_id=i.id) AS sent_at,
+                  (SELECT COUNT(*) FROM evidence e WHERE e.problem_id=i.problem_id
+                     AND e.assigned_at > (SELECT MAX(d.created_at) FROM dispatches d WHERE d.initiative_id=i.id)) AS new_evidence,
+                  p.evidence_changed_at AS problem_changed_at
            FROM initiatives i
            JOIN problems p ON p.id=i.problem_id
            LEFT JOIN themes t ON t.id=i.theme_id
            ORDER BY i.id DESC"""
     )
-    return [_decode(i) for i in items]
+    return [_with_context(_decode(i)) for i in items]
 
 
 def get_initiative(iid: int) -> dict | None:
     i = one(
-        """SELECT i.*, p.title AS problem_title, p.summary AS problem_summary, t.title AS theme_title
+        """SELECT i.*, p.title AS problem_title, p.summary AS problem_summary, t.title AS theme_title,
+                  (SELECT MAX(d.created_at) FROM dispatches d WHERE d.initiative_id=i.id) AS sent_at,
+                  (SELECT COUNT(*) FROM evidence e WHERE e.problem_id=i.problem_id
+                     AND e.assigned_at > (SELECT MAX(d.created_at) FROM dispatches d WHERE d.initiative_id=i.id)) AS new_evidence,
+                  p.evidence_changed_at AS problem_changed_at
            FROM initiatives i JOIN problems p ON p.id=i.problem_id
            LEFT JOIN themes t ON t.id=i.theme_id WHERE i.id=?""",
         (iid,),
     )
     if not i:
         return None
-    i = _decode(i)
+    i = _with_context(_decode(i))
     i["evidence"] = rows("SELECT * FROM evidence WHERE problem_id=? ORDER BY id", (i["problem_id"],))
     i["stories"] = list_stories(iid)
     i["dispatches"] = rows("SELECT * FROM dispatches WHERE initiative_id=? ORDER BY id DESC", (iid,))
@@ -476,8 +546,13 @@ def list_stories(iid: int) -> list[dict]:
     return [_story(s) for s in rows("SELECT * FROM stories WHERE initiative_id=? ORDER BY position, id", (iid,))]
 
 
+def _touch(c, iid: int) -> None:
+    c.execute("UPDATE initiatives SET updated_at=? WHERE id=?", (now(), iid))
+
+
 def save_stories(iid: int, stories: list[dict], replace: bool = True) -> list[dict]:
     with conn() as c:
+        _touch(c, iid)
         if replace:
             c.execute("DELETE FROM stories WHERE initiative_id=?", (iid,))
         start = c.execute("SELECT COALESCE(MAX(position), -1) + 1 AS n FROM stories WHERE initiative_id=?", (iid,)).fetchone()["n"]
@@ -502,13 +577,110 @@ def update_story(sid: int, data: dict) -> dict | None:
     if sets:
         with conn() as c:
             c.execute(f"UPDATE stories SET {', '.join(sets)} WHERE id=?", (*args, sid))
+            row = c.execute("SELECT initiative_id FROM stories WHERE id=?", (sid,)).fetchone()
+            if row:
+                _touch(c, row["initiative_id"])
     s = one("SELECT * FROM stories WHERE id=?", (sid,))
     return _story(s) if s else None
 
 
 def delete_story(sid: int) -> bool:
     with conn() as c:
-        return c.execute("DELETE FROM stories WHERE id=?", (sid,)).rowcount > 0
+        row = c.execute("SELECT initiative_id FROM stories WHERE id=?", (sid,)).fetchone()
+        gone = c.execute("DELETE FROM stories WHERE id=?", (sid,)).rowcount > 0
+        if gone and row:
+            _touch(c, row["initiative_id"])
+        return gone
+
+
+# ---------- prioritization ----------
+
+SCORE_WEIGHTS = {"reach": 35, "severity": 20, "corroboration": 15, "recency": 10, "strategy": 20}   # points; they add up to 100
+REACH_SATURATES_AT = 20      # evidence items after which more customers stop adding points
+RECENT_DAYS = 30
+
+
+def score_components(evidence_count: int, severity: str, n_sources: int, recent: int, theme_priority: int | None) -> dict:
+    """Why a problem ranks where it does, as points a person can read. Nothing is hidden in a weight:
+    reach (how many customers), severity, corroboration (independent sources), recency, and fit with a priority theme."""
+    c = {
+        "reach": SCORE_WEIGHTS["reach"] * min(1.0, math.log1p(evidence_count) / math.log1p(REACH_SATURATES_AT)),
+        "severity": {"high": 20, "medium": 12, "low": 4}.get(severity, 12),
+        "corroboration": {0: 0, 1: 0, 2: 9}.get(n_sources, 15),
+        "recency": SCORE_WEIGHTS["recency"] * (min(recent, evidence_count) / evidence_count if evidence_count else 0),
+        "strategy": {1: 20, 2: 12, 3: 6}.get(theme_priority, 0),
+    }
+    c = {k: round(v, 1) for k, v in c.items()}
+    c["total"] = round(sum(c.values()))
+    return c
+
+
+def _why(p: dict, comp: dict, theme_priority: int | None) -> str:
+    bits = [f"{p['evidence_count']} piece{'s' if p['evidence_count'] != 1 else ''} of evidence", f"{p['severity']} severity"]
+    if len(p["sources"]) > 1:
+        bits.append(f"{len(p['sources'])} independent sources")
+    if comp["recency"] >= 5:
+        bits.append("mostly recent")
+    if theme_priority:
+        bits.append(f"in a priority {theme_priority} theme")
+    return ", ".join(bits)
+
+
+def priorities() -> dict:
+    """Ranked work. build_next: initiatives not yet shipped. start_next: problems nobody is working on yet."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=RECENT_DAYS)).isoformat(timespec="milliseconds")
+    recent = {r["problem_id"]: r["n"] for r in rows(
+        "SELECT problem_id, COUNT(*) AS n FROM evidence WHERE problem_id IS NOT NULL AND created_at >= ? GROUP BY problem_id", (cutoff,))}
+    theme_prio = {t["id"]: t["priority"] for t in list_themes()}
+    probs = list_problems()
+    scored = {}
+    for p in probs:
+        prio = theme_prio.get(p["theme_id"])
+        comp = score_components(p["evidence_count"], p["severity"], len(p["sources"]), recent.get(p["id"], 0), prio)
+        scored[p["id"]] = (p, comp, prio)
+
+    start = [{"id": p["id"], "title": p["title"], "severity": p["severity"], "evidence_count": p["evidence_count"], "theme_title": p["theme_title"],
+              "score": comp["total"], "components": comp, "why": _why(p, comp, prio)}
+             for p, comp, prio in scored.values() if p["initiative_count"] == 0]
+    build = []
+    for i in list_initiatives():
+        if i["status"] in ("shipped", "measured") or i["problem_id"] not in scored:
+            continue
+        p, comp, prio = scored[i["problem_id"]]
+        build.append({"id": i["id"], "title": i["title"], "status": i["status"], "problem_title": p["title"], "theme_title": i["theme_title"],
+                      "score": comp["total"], "components": comp, "why": _why(p, comp, prio), "stale": i["context"]["stale"]})
+    key = lambda x: (-x["score"], -x.get("evidence_count", 0), x["id"])
+    return {"build_next": sorted(build, key=key), "start_next": sorted(start, key=key), "weights": SCORE_WEIGHTS}
+
+
+# ---------- settings and locks ----------
+
+def get_setting(key: str, default: str = "") -> str:
+    row = one("SELECT value FROM settings WHERE key=?", (key,))
+    return row["value"] if row else default
+
+
+def set_setting(key: str, value: str) -> None:
+    with conn() as c:
+        c.execute("INSERT INTO settings(key, value) VALUES (?,?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value", (key, value))
+
+
+def try_lock(name: str, ttl_seconds: int = 120) -> bool:
+    """Take a named lock for this workspace. Returns False when another run holds it. A lock past its expiry is taken over,
+    so a crashed run cannot block the workspace forever."""
+    expiry = (datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)).isoformat(timespec="milliseconds")
+    with conn() as c:
+        row = c.execute(
+            "INSERT INTO settings(key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value "
+            "WHERE settings.value < ? RETURNING key",
+            (f"lock:{name}", expiry, now()),
+        ).fetchone()
+    return row is not None
+
+
+def release_lock(name: str) -> None:
+    with conn() as c:
+        c.execute("DELETE FROM settings WHERE key=?", (f"lock:{name}",))
 
 
 # ---------- export ----------
@@ -548,6 +720,8 @@ def recent_activity(limit: int = 8) -> list[dict]:
     return rows(
         """SELECT kind, ref_id, label, created_at FROM (
                SELECT 'initiative' AS kind, id AS ref_id, title AS label, created_at FROM initiatives
+               UNION ALL
+               SELECT 'problem', id, 'New problem: ' || title, created_at FROM problems
                UNION ALL
                SELECT 'dispatch', i.id, i.title || ' sent to ' || d.target, d.created_at
                  FROM dispatches d JOIN initiatives i ON i.id=d.initiative_id
@@ -610,6 +784,19 @@ def compute_insights() -> list[dict]:
         add("info", f"{len(nostories)} {'initiative has' if len(nostories) == 1 else 'initiatives have'} no stories",
             f"Break \"{nostories[0]['title']}\" into a story map so agents can build it in steps.",
             "Open initiative", "initiative", {"initiative_id": nostories[0]["id"], "tab": "stories"})
+
+    stale = [i for i in inits if i["context"]["stale"] and i["status"] not in ("shipped", "measured")]
+    if stale:
+        top = stale[0]
+        add("attention", f"{_plural(len(stale), 'initiative has', 'initiatives have')} changed since an agent or tracker last got {'it' if len(stale) == 1 else 'them'}",
+            f"\"{top['title']}\": {' and '.join(top['context']['reasons'])}. Send the updated brief so the build matches.",
+            "Open initiative", "initiative", {"initiative_id": top["id"], "tab": "handoff"})
+
+    ranked = priorities()
+    pool = ranked["build_next"] or ranked["start_next"]
+    if len(ranked["build_next"]) + len(ranked["start_next"]) >= 2 and pool:
+        top = pool[0]
+        add("info", f"Build next: \"{top['title']}\"", f"Scores {top['score']} of 100: {top['why']}.", "See priorities", "priorities")
 
     unmeasured = [i for i in inits if i["status"] == "shipped" and i["latest_verdict"] in (None, "too_early")]
     if unmeasured:

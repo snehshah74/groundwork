@@ -144,6 +144,7 @@ label.field > span { font-weight: 600; }
 .tag.evidence { --c: var(--c-evidence); } .tag.problem { --c: var(--c-problem); } .tag.theme { --c: var(--c-theme); }
 .tag.initiative { --c: var(--c-initiative); } .tag.story { --c: var(--c-story); } .tag.outcome { --c: var(--c-outcome); }
 .tag.muted { --c: var(--ink-3); font-weight: 500; }
+.tag.stale { --c: var(--warn); }
 .muted { color: var(--ink-3); }
 .sub { color: var(--ink-2); }
 .small { font-size: .9rem; }
@@ -347,6 +348,16 @@ pre.brief { background: color-mix(in srgb, var(--ink) 5%, var(--raised)); border
 .group-title { margin: 28px 0 12px; font-size: .85rem; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3); font-weight: 650; font-family: var(--text); }
 .log-row { display: grid; grid-template-columns: 84px 1fr; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line-2); font-size: .92rem; }
 .log-row.bad b { color: var(--danger); }
+
+.switch { display: flex; gap: 12px; align-items: flex-start; cursor: pointer; }
+.switch input { width: 18px; height: 18px; margin-top: 3px; accent-color: var(--accent); flex: none; }
+
+.prio-row { display: grid; grid-template-columns: 36px minmax(0, 1fr) 56px auto; gap: 14px; padding: 14px 4px; border-bottom: 1px solid var(--line-2); align-items: center; }
+.prio-row .rank { font: 700 1.1rem var(--display); color: var(--ink-3); text-align: center; }
+.prio-row .score { font: 700 1.6rem var(--display); letter-spacing: -.03em; text-align: right; font-variant-numeric: tabular-nums; }
+.scorebar { display: flex; height: 8px; border-radius: 4px; overflow: hidden; background: var(--line-2); margin-top: 8px; max-width: 420px; }
+.scorebar i { display: block; height: 100%; }
+@media (max-width: 760px) { .prio-row { grid-template-columns: 28px minmax(0, 1fr) 48px; } .prio-row .actions { grid-column: 2 / -1; } }
 
 /* ---------- ask velo ---------- */
 .ask { position: fixed; top: 0; right: 0; bottom: 0; width: min(430px, 100vw); background: var(--surface); border-left: 1px solid var(--line); z-index: 40; display: flex; flex-direction: column; transform: translateX(102%); transition: transform .22s ease; box-shadow: var(--shadow); }

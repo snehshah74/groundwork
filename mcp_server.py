@@ -101,6 +101,22 @@ def get_initiative_context(initiative_id: int) -> str:
 
 
 @mcp.tool()
+def whats_changed(initiative_id: int) -> str:
+    """Check whether an initiative's evidence or spec changed since its brief was last sent. Call this before continuing
+    long-running work, and call get_initiative_context again if it says the brief is out of date."""
+    _ws()
+    i = core.get_initiative(initiative_id)
+    if not i:
+        return f"Initiative {initiative_id} not found."
+    c = i["context"]
+    if not c["sent_at"]:
+        return "No brief has been sent for this initiative yet. Call get_initiative_context to get it."
+    if c["stale"]:
+        return f"Out of date: {' and '.join(c['reasons'])} since the brief was last sent ({c['sent_at']}). Call get_initiative_context again."
+    return f"Up to date as of {c['sent_at']}."
+
+
+@mcp.tool()
 def get_product_context() -> str:
     """Get what the product is: name, overview, product canvas and the strategy themes. Read this once at the
     start of a session so your work fits the product's direction."""

@@ -51,6 +51,11 @@ def test_member_tools_end_to_end(client, monkeypatch):
     assert "recorded" in m.report_outcome(iid, "worked", "37% fewer tickets")
     assert owner.get(f"/api/initiatives/{iid}").json()["status"] == "measured"
     assert "must be one of" in m.report_outcome(iid, "great")
+    assert m.whats_changed(iid).startswith("Up to date")
+    owner.patch(f"/api/initiatives/{iid}", json={"persona": "A different audience"})
+    assert "Out of date: the spec or stories were edited" in m.whats_changed(iid)
+    m.get_initiative_context(iid)
+    assert m.whats_changed(iid).startswith("Up to date")
 
 
 def test_viewer_token_is_read_only_and_isolated(client, monkeypatch):
